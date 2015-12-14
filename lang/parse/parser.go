@@ -26,7 +26,7 @@ type Parser struct {
 	vars    map[string]Variable // var names
 	lastVar Variable            // generates vars
 	eof     bool                // true after reading the eof
-	errs    []error             // reported errors
+	err     *SyntaxError        // reported error(s)
 }
 
 // Parse creates a parser reading from the given lexer.
@@ -44,7 +44,7 @@ func String(str string) ([]Term, error) {
 	return StringOps(str, DefaultOps())
 }
 
-// String parses the string using the given operators and returns all clauses.
+// StringOps parses the string using the given operators and returns all clauses.
 func StringOps(str string, ops OpTable) (terms []Term, err error) {
 	var t Term
 	lexer := Lex(strings.NewReader(str), ops)
@@ -75,11 +75,8 @@ func (s *Parser) Read() (Term, error) {
 	if tok.Typ != EOC {
 		return nil, unexpected(s.name, tok, EOC)
 	}
-	if len(s.errs) == 1 {
-		return nil, s.errs[0]
-	}
-	if len(s.errs) > 1 {
-		return nil, compositeErr(s.errs...)
+	if s.err != nil {
+		return nil, s.err
 	}
 	return term, nil
 }
@@ -90,15 +87,16 @@ func (s *Parser) Reset(l Lexer) {
 	s.buf = s.buf[:0]
 	s.pos = 0
 	s.stack = s.stack[:0]
-	s.errs = s.errs[:0]
+	s.err = nil
 }
 
 // State Machine Infrastructure
 // --------------------------------------------------
 
 // report handles all errors.
-func (s *Parser) report(err error) {
-	s.errs = append(s.errs, err)
+func (s *Parser) report(err *SyntaxError) {
+	err.Prev = s.err
+	s.err = err
 }
 
 // peek returns the current token without advancing.
@@ -106,7 +104,7 @@ func (s *Parser) peek() Token {
 	for len(s.buf) <= s.pos {
 		tok, err := s.l.Read()
 		if err != nil && err != io.EOF {
-			s.report(err)
+			s.report(wrapErr(s.name, tok, err))
 		}
 		s.buf = append(s.buf, tok)
 	}
@@ -175,7 +173,7 @@ func (s *Parser) readTerm(maxprec int) (t Term, prec int) {
 	case GROUP_CLOSE, LIST_CLOSE, EOC, EOF:
 		return nil, maxprec
 	case ERROR:
-		s.report(SyntaxError{tok.Val, tok})
+		s.report(&SyntaxError{tok.Val, tok, nil})
 		return nil, maxprec
 	default:
 		panic("TODO: other cases")
@@ -231,7 +229,7 @@ func (s *Parser) readNum() (t Term, prec int) {
 	var n Num
 	_, err := fmt.Sscan(tok.Val, &n)
 	if err != nil {
-		s.report(err)
+		s.report(wrapErr(s.name, tok, err))
 	}
 	t = n
 	return t, 0
@@ -331,7 +329,7 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 					if nextop.Prec > op.Prec &&
 						nextop.Typ != FX &&
 						nextop.Typ != FX {
-						s.report(ambiguous(s.name, next))
+						s.report(ambiguousOp(s.name, next))
 						s.pos = s.pop()
 						return s.readIdent()
 					}
