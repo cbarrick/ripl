@@ -15,6 +15,7 @@ const (
 	eof       = rune(3) // EOF rune
 	bufSize   = 64      // initial buffer size
 	bufFactor = 8       // buffer grows by this much as needed, must be >= 4
+	readAhead = 2       // max number of tokens to read ahead of client
 )
 
 // API
@@ -22,9 +23,10 @@ const (
 
 // The Lexer tokenizes and categorizes tokens in a prolog source, using an
 // operator table to identify possible operators. The lexer runs in a separate
-// goroutine and may read ahead of the user. The lexer pauses after it reads the
-// clause terminator and resumes on demand when the next token is requested. It
-// is not safe to update the operator table while the lexer is running.
+// goroutine and may read ahead of the user. The lexer routine blocks after it
+// reads the clause terminator and resumes on demand when the next token is
+// requested. It is not safe to update the operator table while the lexer is
+// running.
 // TODO: It would be a good idea to put a mutex on the operator table.
 type Lexer struct {
 	toks chan Token    // reads successive tokens
@@ -35,7 +37,7 @@ type Lexer struct {
 // Only tokens in the operator table will be marked as operators.
 // It is safe to modify the operator table until the first call to NextToken.
 func Lex(input io.Reader, ops OpTable) Lexer {
-	toks := make(chan Token, 2)
+	toks := make(chan Token, readAhead)
 	ctrl := make(chan struct{})
 	go lex(input, ops, toks, ctrl)
 	return Lexer{
@@ -64,12 +66,13 @@ func (l Lexer) NextToken() (tok Token, err error) {
 // Close stops the lexer's goroutine.
 func (l Lexer) Close() {
 	select {
+	case <-l.ctrl:
+		l.Close()
 	case _, ok := <-l.toks:
 		if ok {
 			l.Close()
 		}
-	case <-l.ctrl:
-		l.Close()
+		return
 	case l.ctrl <- struct{}{}:
 		return
 	}
@@ -95,15 +98,15 @@ func (tok Token) String() string {
 	}
 }
 
-// A TokType identifies the kind of token represented by a Token.
+// A TokType classifies kinds of token.
 type TokType int
 
 const (
-	// Special lexeme types
+	// Special token types
 	EOF   TokType = iota // EOF indicator
 	ERROR                // used to pass errors
 
-	// Normal lexeme types
+	// Normal token types
 	OP          // operators
 	IDENT       // atoms and functors
 	VAR         // variable
@@ -152,10 +155,30 @@ func (typ TokType) String() string {
 
 // State Machine Infrastructure
 // --------------------------------------------------
+// The lexer goroutine provides a state-machine interface for interfacing with
+// the Reader. It reads bytes into a buffer and allows the transition functions
+// to process to handle them one by one. When a token is emitted, the text
+// consists of all the bytes that have been read since the previous emitted
+// token.
+//
+// The states and transitions are programmed through state functions (type
+// stateFn). A state functions is simply a function that process some bytes and
+// returns the next stateFn.
+//
+// The machine interface also provides a history stack, allowing for
+// backtracking. The history stack is discarded when a token is emitted.
+//
 // Lexing technique taken from Rob Pike's presentation:
 // Pike, Rob. "Lexical Scanning in Go". GTUG Sydney. 2011.
 // http://cuddle.googlecode.com/hg/talk/lex.html
 
+// The lexState provides the machine interface.
+//
+// The control channel needs some explaining: When the goroutine must pause, it
+// blocks by sending on the control channel. The next call to (Lexer).Read will
+// read from the control channel to triger the resume. In the opposite direction
+// (Lexer).Close writes to the control channel. When the goroutine reads this,
+// it shuts down.
 type lexState struct {
 	input  io.Reader     // input being lexed
 	buf    []byte        // the buffer
@@ -171,9 +194,13 @@ type lexState struct {
 	eof    bool          // true after buffering the eof
 }
 
-var syntaxErr = errors.New("lexing error")
+// A stateFn is a state of the lexer, consuming runes and emiting lexemes
+// and returning the next state of the lexer or nil when done.
+type stateFn func(*lexState) stateFn
 
-// lex is the entry point of the lexer's goroutine
+var lexingErr = errors.New("lexing error")
+
+// lex is the entry point of the lexer's goroutine.
 func lex(input io.Reader, ops OpTable, toks chan Token, ctrl chan struct{}) {
 	s := lexState{
 		input: input,
@@ -184,6 +211,8 @@ func lex(input io.Reader, ops OpTable, toks chan Token, ctrl chan struct{}) {
 		ctrl:  ctrl,
 	}
 
+	// Errors are handled by panicing the goroutine.
+	// We return the error to the user and exit gracefully.
 	defer func() {
 		err := recover()
 		if err != nil && err != io.EOF {
@@ -197,8 +226,9 @@ func lex(input io.Reader, ops OpTable, toks chan Token, ctrl chan struct{}) {
 		close(toks)
 	}()
 
+	// We wait until the first read, then start the main loop.
 	s.wait()
-	for state := lexAny; state != nil; {
+	for state := startState; state != nil; {
 		select {
 		case <-s.ctrl:
 			return
@@ -290,11 +320,6 @@ func (s *lexState) pop() {
 	s.pos = pos
 }
 
-// ignore skips over the pending text.
-func (s *lexState) ignore() {
-	s.start = s.pos
-}
-
 // accept consumes the next rune if it's from the valid set or unicode ranges.
 func (s *lexState) accept(valid string, ranges ...*unicode.RangeTable) bool {
 	r := s.peek()
@@ -328,7 +353,7 @@ func (s *lexState) acceptUntil(delim rune) {
 
 // emit sends the pending text as a Token of the given type.
 func (s *lexState) emit(t TokType) {
-	str := string(s.buf[s.start:s.pos])
+	str := s.pending()
 	s.toks <- Token{str, t, s.lineNo + 1, s.colNo}
 	s.start = s.pos
 	s.stack = s.stack[:0]
@@ -342,18 +367,16 @@ func (s *lexState) emit(t TokType) {
 	}
 }
 
-// wait blocks until the next call to Lexer.Next.
-// This prevents the lexer from reading ahead of the parser.
+// wait blocks until the next call to (Lexer).NextToken.
 func (s *lexState) wait() {
 	s.ctrl <- struct{}{}
 }
 
 // Prolog Lexer State Machine
 // --------------------------------------------------
+// This is the state machine to lex Prolog.
 
-// A stateFn is a state of the lexer, consuming runes and emiting lexemes
-// and returning the next state of the lexer or nil when done.
-type stateFn func(*lexState) stateFn
+var startState = lexAny
 
 func lexAny(s *lexState) stateFn {
 	if s.acceptRun(" \n\t", unicode.White_Space) {
@@ -402,7 +425,7 @@ func lexAny(s *lexState) stateFn {
 func lexText(s *lexState) stateFn {
 	r := s.peek()
 
-	// never read ahead past a dot
+	// never read ahead past a clause terminal.
 	if r == '.' {
 		s.push()
 		s.read()
@@ -416,7 +439,7 @@ func lexText(s *lexState) stateFn {
 	}
 
 	// operators
-	// we search through the operators, prefering longer matches
+	// we search through the operators, prefering longer matches.
 	for _, op := range s.ops.ByLongest() {
 		s.push()
 		match := true
@@ -451,7 +474,7 @@ func lexText(s *lexState) stateFn {
 		return lexAny
 	}
 
-	s.report(syntaxErr)
+	s.report(lexingErr)
 	return nil
 }
 
@@ -465,7 +488,7 @@ func lexVariable(s *lexState) stateFn {
 		s.emit(VAR)
 		return lexAny
 	}
-	s.report(syntaxErr)
+	s.report(lexingErr)
 	return nil
 }
 
@@ -489,6 +512,6 @@ func lexNumber(s *lexState) stateFn {
 		s.emit(NUM)
 		return lexAny
 	}
-	s.report(syntaxErr)
+	s.report(lexingErr)
 	return nil
 }
