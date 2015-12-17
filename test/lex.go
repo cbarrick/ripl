@@ -18,4 +18,5 @@ func main() {
 		fmt.Println(tok)
 	}
 	fmt.Println(err)
+	lexer.Close()
 }

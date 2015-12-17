@@ -215,7 +215,7 @@ func lex(name string, input io.Reader, ops OpTable,
 	}
 
 	// Errors are handled by panicing the goroutine.
-	// We return the error to the user and exit gracefully.
+	// We emit a coresponding error token and continue.
 	defer func() {
 		err := recover()
 		if err != nil && err != io.EOF {
@@ -227,15 +227,20 @@ func lex(name string, input io.Reader, ops OpTable,
 				s.colNo,
 			}
 		}
-		close(toks)
+		lex(name, input, ops, toks, ctrl)
 	}()
 
 	// We wait until the first read, then start the main loop.
 	s.wait()
 	for state := startState; state != nil; {
 		select {
+
+		// cleanup
 		case <-s.ctrl:
+			close(toks)
 			return
+
+		// run the state machine
 		default:
 			state = state(&s)
 		}
