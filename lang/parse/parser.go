@@ -49,11 +49,11 @@ func StringOps(str string, ops OpTable) (terms []Term, err error) {
 	var t Term
 	lexer := Lex(strings.NewReader(str), ops)
 	parser := Parse("string", lexer, ops)
-	for t, err = parser.Read(); err == nil; {
+	for t, err = parser.NextClause(); err == nil; {
 		if t != nil {
 			terms = append(terms, t)
 		}
-		t, err = parser.Read()
+		t, err = parser.NextClause()
 	}
 	if err != io.EOF {
 		return terms, nil
@@ -61,8 +61,8 @@ func StringOps(str string, ops OpTable) (terms []Term, err error) {
 	return terms, err
 }
 
-// Read returns and consumes the next clause.
-func (s *Parser) Read() (Term, error) {
+// NextClause returns and consumes the next clause.
+func (s *Parser) NextClause() (Term, error) {
 	defer s.Reset(s.l)
 	term, _ := s.readTerm(1200)
 	tok := s.read()

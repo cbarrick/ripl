@@ -15,12 +15,12 @@ func main() {
 	ops := lang.DefaultOps()
 	lexer := parse.Lex(os.Stdin, ops)
 	parser := parse.Parse("stdin", lexer, ops)
-	for t, err = parser.Read(); err != io.EOF; {
+	for t, err = parser.NextClause(); err != io.EOF; {
 		if err != nil {
 			fmt.Println(err)
 		} else {
 			fmt.Println(t)
 		}
-		t, err = parser.Read()
+		t, err = parser.NextClause()
 	}
 }
