@@ -102,7 +102,7 @@ func (s *Parser) report(err *SyntaxError) {
 // peek returns the current token without advancing.
 func (s *Parser) peek() Token {
 	for len(s.buf) <= s.pos {
-		tok, err := s.l.Read()
+		tok, err := s.l.NextToken()
 		if err != nil && err != io.EOF {
 			s.report(wrapErr(s.name, tok, err))
 		}

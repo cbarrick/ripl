@@ -14,7 +14,7 @@ func main() {
 		tok   parse.Token
 		err   error
 	)
-	for tok, err = lexer.Read(); err == nil; tok, err = lexer.Read() {
+	for tok, err = lexer.NextToken(); err == nil; tok, err = lexer.NextToken() {
 		fmt.Println(tok)
 	}
 	fmt.Println(err)

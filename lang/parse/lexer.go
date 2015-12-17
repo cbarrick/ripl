@@ -31,10 +31,9 @@ type Lexer struct {
 	ctrl chan struct{} // used for flow control in the goroutine
 }
 
-// Lex extracts Prolog lexemes from an io.Reader.
-// The name of the lexer is used for error reports and the OpTable describes the
-// available operators. The lexer may read ahead of the most recently returned
-// lexeme, but it will not read past the current clause.
+// Lex constructs a Lexer for some source of Prolog lexemes.
+// Only tokens in the operator table will be marked as operators.
+// It is safe to modify the operator table until the first call to NextToken.
 func Lex(input io.Reader, ops OpTable) Lexer {
 	toks := make(chan Token, 2)
 	ctrl := make(chan struct{})
@@ -45,11 +44,11 @@ func Lex(input io.Reader, ops OpTable) Lexer {
 	}
 }
 
-// Read returns the next lexeme in the input.
-func (l Lexer) Read() (tok Token, err error) {
+// NextToken returns the next lexeme in the input.
+func (l Lexer) NextToken() (tok Token, err error) {
 	select {
 	case <-l.ctrl:
-		return l.Read()
+		return l.NextToken()
 	case tok = <-l.toks:
 		switch tok.Typ {
 		case EOF:
