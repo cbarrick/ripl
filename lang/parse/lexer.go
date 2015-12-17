@@ -74,8 +74,17 @@ func (l Lexer) Close() {
 		}
 		return
 	case l.ctrl <- struct{}{}:
+		for _ = range l.toks {
+			// drain toks
+		}
 		return
 	}
+}
+
+// Reset changes the parser to use the new input and operator table.
+func (l Lexer) Reset(name string, input io.Reader, ops OpTable) {
+	l.Close()
+	go lex(name, input, ops, l.toks, l.ctrl)
 }
 
 // A Token is a lexical item.

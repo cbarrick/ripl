@@ -17,7 +17,6 @@ const (
 // --------------------------------------------------
 
 type Parser struct {
-	name    string              // used for error messages
 	l       Lexer               // provides the Tokens
 	buf     []Token             // buffer of tokens
 	pos     int                 // current position in the buffer
@@ -29,11 +28,10 @@ type Parser struct {
 	err     *SyntaxError        // reported error(s)
 }
 
-// Parse creates a parser reading from the given lexer.
-func Parse(name string, l Lexer, ops OpTable) Parser {
+// Parse creates a parser reading from the given input.
+func Parse(name string, input io.Reader, ops OpTable) Parser {
 	return Parser{
-		name: name,
-		l:    l,
+		l:    Lex(name, input, ops),
 		ops:  ops,
 		vars: make(map[string]Variable),
 	}
@@ -47,8 +45,7 @@ func String(str string) ([]Term, error) {
 // StringOps parses the string using the given operators and returns all clauses.
 func StringOps(str string, ops OpTable) (terms []Term, err error) {
 	var t Term
-	lexer := Lex("string", strings.NewReader(str), ops)
-	parser := Parse("string", lexer, ops)
+	parser := Parse("string", strings.NewReader(str), ops)
 	for t, err = parser.NextClause(); err == nil; {
 		if t != nil {
 			terms = append(terms, t)
@@ -63,7 +60,6 @@ func StringOps(str string, ops OpTable) (terms []Term, err error) {
 
 // NextClause returns and consumes the next clause.
 func (s *Parser) NextClause() (Term, error) {
-	defer s.Reset(s.l)
 	term, _ := s.readTerm(1200)
 	tok := s.read()
 	if tok.Typ == OP {
@@ -82,8 +78,9 @@ func (s *Parser) NextClause() (Term, error) {
 }
 
 // Reset resets the parser to use the given lexer.
-func (s *Parser) Reset(l Lexer) {
-	s.l = l
+func (s *Parser) Reset(name string, input io.Reader, ops OpTable) {
+	s.l.Reset(name, input, ops)
+	s.ops = ops
 	s.buf = s.buf[:0]
 	s.pos = 0
 	s.stack = s.stack[:0]
