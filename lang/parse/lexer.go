@@ -198,8 +198,6 @@ type lexState struct {
 // and returning the next state of the lexer or nil when done.
 type stateFn func(*lexState) stateFn
 
-var lexingErr = errors.New("lexing error")
-
 // lex is the entry point of the lexer's goroutine.
 func lex(input io.Reader, ops OpTable, toks chan Token, ctrl chan struct{}) {
 	s := lexState{
@@ -273,7 +271,7 @@ func (s *lexState) buffer() bool {
 		return n > 0
 	}
 	if err != nil {
-		s.report(err)
+		panic(err)
 	}
 	return true
 }
@@ -343,12 +341,18 @@ func (s *lexState) acceptRun(valid string, ranges ...*unicode.RangeTable) bool {
 	return false
 }
 
-// acceptUntil consumes runes up to and including the next occurence of delim.
-func (s *lexState) acceptUntil(delim rune) {
-	for r := s.read(); r != delim; {
-		r = s.read()
+// acceptUntil consumes runes runes from the ranges up-to but not including the
+// next occurence of a rune in delim.
+func (s *lexState) acceptUntil(delims string, ranges ...*unicode.RangeTable) bool {
+	r := s.peek()
+	if strings.IndexRune(delims, r) >= 0 || !unicode.In(r, ranges...) {
+		return false
 	}
-	return
+	for strings.IndexRune(delims, r) < 0 && unicode.In(r, ranges...) {
+		s.read()
+		r = s.peek()
+	}
+	return true
 }
 
 // emit sends the pending text as a Token of the given type.
@@ -407,7 +411,7 @@ func lexAny(s *lexState) stateFn {
 		return lexAny
 
 	case r == '%':
-		s.acceptUntil('\n')
+		s.acceptUntil("\n", unicode.PrintRanges...)
 		s.emit(COMMENT)
 		return lexAny
 
@@ -425,21 +429,21 @@ func lexAny(s *lexState) stateFn {
 func lexText(s *lexState) stateFn {
 	r := s.peek()
 
-	// never read ahead past a clause terminal.
+	// clause terminal
 	if r == '.' {
 		s.push()
 		s.read()
 		r = s.peek()
 		if r == '%' || unicode.IsSpace(r) || r == eof {
 			s.emit(EOC)
-			s.wait()
+			s.wait() // must always wait after emitting EOC
 			return lexAny
 		}
 		s.pop()
 	}
 
 	// operators
-	// we search through the operators, prefering longer matches.
+	// we search through the operators, prefering longer matches
 	for _, op := range s.ops.ByLongest() {
 		s.push()
 		match := true
@@ -462,56 +466,63 @@ func lexText(s *lexState) stateFn {
 	// single quoted identifier
 	if r == '\'' {
 		s.read()
-		s.acceptUntil('\'')
+		s.acceptUntil("'", unicode.PrintRanges...)
+		r = s.read()
+		if r != '\'' {
+			s.report(fmt.Errorf("expected %q, found %q", '\'', r))
+		}
 		s.emit(IDENT)
 		return lexAny
 	}
 
-	// consecutive lower case identifier
-	if unicode.IsLower(r) {
-		s.acceptRun("_", unicode.Letter, unicode.Number)
+	// consecutive letter identifier
+	if unicode.IsLetter(r) {
+		s.acceptRun("_", unicode.Letter, unicode.Number, unicode.Mark)
 		s.emit(IDENT)
 		return lexAny
 	}
 
-	s.report(lexingErr)
-	return nil
+	// consecutive symbol identifier
+	for {
+		s.acceptUntil(".,", unicode.Punct, unicode.Symbol)
+		r = s.peek()
+		if r == '.' {
+			s.push()
+			s.read()
+			r = s.peek()
+			if r == '%' || unicode.IsSpace(r) || r == eof {
+				s.pop()
+				s.emit(IDENT)
+				return lexText
+			}
+			continue
+		}
+		s.emit(IDENT)
+		return lexAny
+	}
 }
 
 func lexVariable(s *lexState) stateFn {
-	r := s.peek()
-	if unicode.IsUpper(r) || r == '_' {
-		for unicode.IsLetter(r) || r == '_' {
-			s.read()
-			r = s.peek()
-		}
-		s.emit(VAR)
-		return lexAny
-	}
-	s.report(lexingErr)
-	return nil
+	s.acceptRun("_", unicode.Letter, unicode.Number, unicode.Mark)
+	s.emit(VAR)
+	return lexAny
 }
 
 func lexNumber(s *lexState) stateFn {
-	r := s.peek()
-	if '0' <= r && r <= '9' {
-		s.acceptRun("0123456789")
-		s.push()
-		if s.accept(".") {
-			if !s.acceptRun("0123456789") {
-				s.pop()
-			}
+	s.acceptRun("0123456789")
+	s.push()
+	if s.accept(".") {
+		if !s.acceptRun("0123456789") {
+			s.pop()
 		}
-		if s.accept("eE") {
-			s.push()
-			s.accept("+-")
-			if !s.acceptRun("0123456789") {
-				s.pop()
-			}
-		}
-		s.emit(NUM)
-		return lexAny
 	}
-	s.report(lexingErr)
-	return nil
+	if s.accept("eE") {
+		s.push()
+		s.accept("+-")
+		if !s.acceptRun("0123456789") {
+			s.pop()
+		}
+	}
+	s.emit(NUM)
+	return lexAny
 }
