@@ -20,6 +20,12 @@ const (
 // API
 // --------------------------------------------------
 
+// The Lexer tokenizes and categorizes tokens in a prolog source, using an
+// operator table to identify possible operators. The lexer runs in a separate
+// goroutine and may read ahead of the user. The lexer pauses after it reads the
+// clause terminator and resumes on demand when the next token is requested. It
+// is not safe to update the operator table while the lexer is running.
+// TODO: It would be a good idea to put a mutex on the operator table.
 type Lexer struct {
 	toks chan Token    // reads successive tokens
 	ctrl chan struct{} // used for flow control in the goroutine
@@ -192,6 +198,7 @@ func lex(input io.Reader, ops OpTable, toks chan Token, ctrl chan struct{}) {
 		close(toks)
 	}()
 
+	s.wait()
 	for state := lexAny; state != nil; {
 		select {
 		case <-s.ctrl:
