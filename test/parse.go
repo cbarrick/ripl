@@ -13,7 +13,7 @@ func main() {
 	var t lang.Term
 	var err error
 	ops := lang.DefaultOps()
-	lexer := parse.Lex(os.Stdin, ops)
+	lexer := parse.Lex("stdin", os.Stdin, ops)
 	parser := parse.Parse("stdin", lexer, ops)
 	for t, err = parser.NextClause(); err != io.EOF; {
 		if err != nil {

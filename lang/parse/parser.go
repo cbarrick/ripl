@@ -47,7 +47,7 @@ func String(str string) ([]Term, error) {
 // StringOps parses the string using the given operators and returns all clauses.
 func StringOps(str string, ops OpTable) (terms []Term, err error) {
 	var t Term
-	lexer := Lex(strings.NewReader(str), ops)
+	lexer := Lex("string", strings.NewReader(str), ops)
 	parser := Parse("string", lexer, ops)
 	for t, err = parser.NextClause(); err == nil; {
 		if t != nil {
@@ -67,16 +67,16 @@ func (s *Parser) NextClause() (Term, error) {
 	term, _ := s.readTerm(1200)
 	tok := s.read()
 	if tok.Typ == OP {
-		return nil, priorityClash(s.name, tok)
+		return nil, priorityClash(tok)
 	}
-	if tok.Typ == EOF && term == nil {
+	if term == nil && s.err != nil {
+		return nil, s.err
+	}
+	if term == nil && tok.Typ == EOF {
 		return nil, io.EOF
 	}
 	if tok.Typ != EOC {
-		return nil, unexpected(s.name, tok, EOC)
-	}
-	if s.err != nil {
-		return nil, s.err
+		return nil, unexpected(tok, EOC)
 	}
 	return term, nil
 }
@@ -104,7 +104,7 @@ func (s *Parser) peek() Token {
 	for len(s.buf) <= s.pos {
 		tok, err := s.l.NextToken()
 		if err != nil && err != io.EOF {
-			s.report(wrapErr(s.name, tok, err))
+			s.report(wrapErr(tok, err))
 		}
 		s.buf = append(s.buf, tok)
 	}
@@ -173,7 +173,6 @@ func (s *Parser) readTerm(maxprec int) (t Term, prec int) {
 	case GROUP_CLOSE, LIST_CLOSE, EOC, EOF:
 		return nil, maxprec
 	case ERROR:
-		s.report(&SyntaxError{tok.Val, tok, nil})
 		return nil, maxprec
 	default:
 		panic("TODO: other cases")
@@ -202,7 +201,7 @@ func (s *Parser) readIdent() (t Term, prec int) {
 			}
 		}
 		if next.Typ != GROUP_CLOSE {
-			s.report(unexpected(s.name, next, GROUP_CLOSE))
+			s.report(unexpected(next, GROUP_CLOSE))
 		}
 	}
 	t = Compound{
@@ -229,7 +228,7 @@ func (s *Parser) readNum() (t Term, prec int) {
 	var n Num
 	_, err := fmt.Sscan(tok.Val, &n)
 	if err != nil {
-		s.report(wrapErr(s.name, tok, err))
+		s.report(wrapErr(tok, err))
 	}
 	t = n
 	return t, 0
@@ -240,9 +239,9 @@ func (s *Parser) readGroup() (t Term, prec int) {
 	t, _ = s.readTerm(1200)
 	switch tok = s.read(); {
 	case tok.Typ == OP:
-		s.report(priorityClash(s.name, tok))
+		s.report(priorityClash(tok))
 	case tok.Typ != GROUP_CLOSE:
-		s.report(unexpected(s.name, tok, GROUP_CLOSE))
+		s.report(unexpected(tok, GROUP_CLOSE))
 	}
 	return t, 0
 }
@@ -268,7 +267,7 @@ func (s *Parser) readList() (t Term, prec int) {
 			if next.Val == "]" {
 				s.read()
 			} else {
-				s.report(unexpected(s.name, next, LIST_CLOSE))
+				s.report(unexpected(next, LIST_CLOSE))
 			}
 			return List{args, tail}, 0
 
@@ -276,7 +275,7 @@ func (s *Parser) readList() (t Term, prec int) {
 			continue
 
 		default:
-			s.report(unexpected(s.name, next, LIST_CLOSE))
+			s.report(unexpected(next, LIST_CLOSE))
 		}
 	}
 }
@@ -292,7 +291,7 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 		s.pos = s.pop()
 		return lhs, 0
 	default:
-		s.report(unexpected(s.name, tok, OP))
+		s.report(unexpected(tok, OP))
 	}
 
 	// find all apllicable operators
@@ -329,7 +328,7 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 					if nextop.Prec > op.Prec &&
 						nextop.Typ != FX &&
 						nextop.Typ != FX {
-						s.report(ambiguousOp(s.name, next))
+						s.report(ambiguousOp(next))
 						s.pos = s.pop()
 						return s.readIdent()
 					}

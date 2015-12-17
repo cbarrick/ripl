@@ -10,7 +10,7 @@ import (
 
 func main() {
 	var (
-		lexer = parse.Lex(os.Stdin, lang.DefaultOps())
+		lexer = parse.Lex("stdin", os.Stdin, lang.DefaultOps())
 		tok   parse.Token
 		err   error
 	)

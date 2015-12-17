@@ -36,10 +36,10 @@ type Lexer struct {
 // Lex constructs a Lexer for some source of Prolog lexemes.
 // Only tokens in the operator table will be marked as operators.
 // It is safe to modify the operator table until the first call to NextToken.
-func Lex(input io.Reader, ops OpTable) Lexer {
+func Lex(name string, input io.Reader, ops OpTable) Lexer {
 	toks := make(chan Token, readAhead)
 	ctrl := make(chan struct{})
-	go lex(input, ops, toks, ctrl)
+	go lex(name, input, ops, toks, ctrl)
 	return Lexer{
 		toks,
 		ctrl,
@@ -81,6 +81,7 @@ func (l Lexer) Close() {
 // A Token is a lexical item.
 // The lexer categorizes the token and adds position information.
 type Token struct {
+	Name   string
 	Val    string
 	Typ    TokType
 	LineNo int
@@ -180,6 +181,7 @@ func (typ TokType) String() string {
 // (Lexer).Close writes to the control channel. When the goroutine reads this,
 // it shuts down.
 type lexState struct {
+	name   string        // used for error messages
 	input  io.Reader     // input being lexed
 	buf    []byte        // the buffer
 	size   int           // number of valid bytes in buffer
@@ -199,8 +201,11 @@ type lexState struct {
 type stateFn func(*lexState) stateFn
 
 // lex is the entry point of the lexer's goroutine.
-func lex(input io.Reader, ops OpTable, toks chan Token, ctrl chan struct{}) {
+func lex(name string, input io.Reader, ops OpTable,
+	toks chan Token, ctrl chan struct{}) {
+
 	s := lexState{
+		name:  name,
 		input: input,
 		buf:   make([]byte, bufSize),
 		stack: make([]int, 0, 3),
@@ -215,6 +220,7 @@ func lex(input io.Reader, ops OpTable, toks chan Token, ctrl chan struct{}) {
 		err := recover()
 		if err != nil && err != io.EOF {
 			s.toks <- Token{
+				s.name,
 				err.(error).Error(),
 				ERROR,
 				s.lineNo + 1,
@@ -358,7 +364,7 @@ func (s *lexState) acceptUntil(delims string, ranges ...*unicode.RangeTable) boo
 // emit sends the pending text as a Token of the given type.
 func (s *lexState) emit(t TokType) {
 	str := s.pending()
-	s.toks <- Token{str, t, s.lineNo + 1, s.colNo}
+	s.toks <- Token{s.name, str, t, s.lineNo + 1, s.colNo}
 	s.start = s.pos
 	s.stack = s.stack[:0]
 	for _, r := range str {
