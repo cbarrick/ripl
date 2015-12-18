@@ -13,7 +13,7 @@ func main() {
 	var t lang.Term
 	var err error
 	ops := lang.DefaultOps()
-	parser := parse.Parse("stdin", os.Stdin, ops)
+	parser := parse.File("stdin", os.Stdin, ops)
 	for t, err = parser.NextClause(); err != io.EOF; {
 		if err != nil {
 			fmt.Println(err)

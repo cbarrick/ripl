@@ -16,6 +16,8 @@ const (
 // API
 // --------------------------------------------------
 
+// The Parser reads clauses from a Prolog source, using an operator table to
+// identify operators. The parser must be closed to avoid goroutine leeks.
 type Parser struct {
 	l       Lexer               // provides the Tokens
 	buf     []Token             // buffer of tokens
@@ -28,8 +30,8 @@ type Parser struct {
 	err     *SyntaxError        // reported error(s)
 }
 
-// Parse creates a parser reading from the given input.
-func Parse(name string, input io.Reader, ops OpTable) Parser {
+// File creates a parser for the given reader.
+func File(name string, input io.Reader, ops OpTable) Parser {
 	return Parser{
 		l:    Lex(name, input, ops),
 		ops:  ops,
@@ -37,15 +39,20 @@ func Parse(name string, input io.Reader, ops OpTable) Parser {
 	}
 }
 
-// String parses the string using the default operators and returns all clauses.
-func String(str string) ([]Term, error) {
-	return StringOps(str, DefaultOps())
+// String creates a parser for the given string.
+func String(name string, input string, ops OpTable) Parser {
+	return File(name, strings.NewReader(input), ops)
 }
 
-// StringOps parses the string using the given operators and returns all clauses.
-func StringOps(str string, ops OpTable) (terms []Term, err error) {
+// Quick parses the string using the default operators and returns all clauses.
+func Quick(str string) ([]Term, error) {
+	return QuickOps(str, DefaultOps())
+}
+
+// QuickOps parses the string using the given operators and returns all clauses.
+func QuickOps(str string, ops OpTable) (terms []Term, err error) {
 	var t Term
-	parser := Parse("string", strings.NewReader(str), ops)
+	parser := String("string", str, ops)
 	for t, err = parser.NextClause(); err == nil; {
 		if t != nil {
 			terms = append(terms, t)
@@ -58,7 +65,7 @@ func StringOps(str string, ops OpTable) (terms []Term, err error) {
 	return terms, err
 }
 
-// NextClause returns and consumes the next clause.
+// NextClause returns the next clause in the input.
 func (s *Parser) NextClause() (Term, error) {
 	term, _ := s.readTerm(1200)
 	tok := s.read()
@@ -77,7 +84,8 @@ func (s *Parser) NextClause() (Term, error) {
 	return term, nil
 }
 
-// Reset resets the parser to use the given lexer.
+// Reset resets the parser to use the given input.
+// It does not close the old underlying reader.
 func (s *Parser) Reset(name string, input io.Reader, ops OpTable) {
 	s.l.Reset(name, input, ops)
 	s.ops = ops
@@ -85,16 +93,20 @@ func (s *Parser) Reset(name string, input io.Reader, ops OpTable) {
 	s.pos = 0
 	s.stack = s.stack[:0]
 	s.err = nil
+	s.eof = false
 }
 
 // Close shuts down the Parser.
-// It does not close the underlying io.Reader.
+// It does not close the underlying reader.
 func (s *Parser) Close() {
 	s.l.Close()
 }
 
 // State Machine Infrastructure
 // --------------------------------------------------
+// The parser provides a helper interface for interacting with the underlying
+// lexer. It provides a standard peek/read interface and a history stack for
+// backtracking.
 
 // report handles all errors.
 func (s *Parser) report(err *SyntaxError) {
@@ -145,12 +157,20 @@ func (s *Parser) skipWhite() (ok bool) {
 
 // Prolog Parser State Machine
 // --------------------------------------------------
+// Below is the parsing algorithm for Prolog. It is based on the operator
+// precedence parser in the Edinburgh DEC-10 Prolog.
+//
+// The entry-point is readTerm(1200).
+//
+// http://www.j-paine.org/prolog/tools/files/contents.html
 
 func unescape(ident string) string {
 	// TODO
 	return ident
 }
 
+// readTerm reads the longest term possible starting at the next token in the
+// input such that the precedence of the term is no greater than maxprec.
 func (s *Parser) readTerm(maxprec int) (t Term, prec int) {
 	var lhs Term
 	var lhsprec int
@@ -178,7 +198,7 @@ func (s *Parser) readTerm(maxprec int) (t Term, prec int) {
 	case ERROR:
 		return nil, maxprec
 	default:
-		panic("TODO: other cases")
+		panic("unknown token type")
 	}
 
 	s.skipWhite()

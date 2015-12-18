@@ -23,7 +23,7 @@ const (
 // API
 // --------------------------------------------------
 
-// The Lexer tokenizes and categorizes tokens in a prolog source, using an
+// The Lexer tokenizes and categorizes tokens in a Prolog source, using an
 // operator table to identify possible operators. The lexer runs in a separate
 // goroutine and may read ahead of the user. The lexer routine blocks after it
 // reads the clause terminator and resumes on demand when the next token is
@@ -168,7 +168,7 @@ func (typ TokType) String() string {
 
 // State Machine Infrastructure
 // --------------------------------------------------
-// The lexer goroutine provides a state-machine interface for interfacing with
+// The lexer goroutine provides a state-machine interface for interacting with
 // the Reader. It reads bytes into a buffer and allows the transition functions
 // to process to handle them one by one. When a token is emitted, the text
 // consists of all the bytes that have been read since the previous emitted
