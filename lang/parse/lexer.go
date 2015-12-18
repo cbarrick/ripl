@@ -64,6 +64,7 @@ func (l Lexer) NextToken() (tok Token, err error) {
 }
 
 // Close stops the lexer's goroutine.
+// It does not close the underlying io.Reader.
 func (l Lexer) Close() {
 	select {
 	case <-l.ctrl:

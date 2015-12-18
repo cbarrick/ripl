@@ -87,6 +87,12 @@ func (s *Parser) Reset(name string, input io.Reader, ops OpTable) {
 	s.err = nil
 }
 
+// Close shuts down the Parser.
+// It does not close the underlying io.Reader.
+func (s *Parser) Close() {
+	s.l.Close()
+}
+
 // State Machine Infrastructure
 // --------------------------------------------------
 
