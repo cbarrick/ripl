@@ -11,5 +11,4 @@ Dependencies
 
 TODO:
 --------------------------------------------------
-- [ ] Force synchronized access to the operator table with a mutex.
 - [ ] Make a todo list.

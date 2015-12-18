@@ -1,6 +1,9 @@
 package op
 
-import "sort"
+import (
+	"sort"
+	"sync"
+)
 
 // Operator
 // --------------------------------------------------
@@ -40,6 +43,7 @@ func (op *Op) postfix() bool {
 // --------------------------------------------------
 
 type OpTable struct {
+	sync.RWMutex
 	parent *OpTable
 	tab    map[string][]Op
 }
@@ -51,11 +55,16 @@ func DefaultOps() OpTable {
 
 // ExtendOps returns a new operator table extending the parent table.
 func ExtendOps(parent *OpTable) OpTable {
-	return OpTable{parent, make(map[string][]Op)}
+	return OpTable{
+		parent: parent,
+		tab:    make(map[string][]Op),
+	}
 }
 
 // Get returns all operators with the given name.
 func (t *OpTable) Get(name string) (s []Op) {
+	t.RLock()
+	defer t.RUnlock()
 	ops := t.tab[name]
 	s = make([]Op, len(ops))
 	copy(s, ops)
@@ -68,6 +77,8 @@ func (t *OpTable) Get(name string) (s []Op) {
 // Add inserts a new operator into the table.
 // Add does not effect the parent table.
 func (t *OpTable) Add(op Op) (exists bool) {
+	t.Lock()
+	defer t.Unlock()
 	s := t.tab[op.Name]
 	for i := range s {
 		if s[i].infix() && op.infix() ||
@@ -85,6 +96,8 @@ func (t *OpTable) Add(op Op) (exists bool) {
 // Delete removes an operator from the table.
 // Delete does not effect the parent table.
 func (t *OpTable) Delete(op Op) (exists bool) {
+	t.Lock()
+	defer t.Unlock()
 	s := t.tab[op.Name]
 	size := len(s)
 	for i := range s {
@@ -104,6 +117,8 @@ func (t *OpTable) Delete(op Op) (exists bool) {
 
 // Len returns the number of operators in the table.
 func (t *OpTable) Len() int {
+	t.RLock()
+	defer t.RUnlock()
 	size := 0
 	for _, v := range t.tab {
 		size += len(v)
@@ -116,6 +131,8 @@ func (t *OpTable) Len() int {
 
 // Slice returns the operators as a slice.
 func (t *OpTable) Slice() (s []Op) {
+	t.RLock()
+	defer t.RUnlock()
 	for _, v := range t.tab {
 		for _, op := range v {
 			s = append(s, op)

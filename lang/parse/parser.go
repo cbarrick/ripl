@@ -68,6 +68,8 @@ func QuickOps(str string, ops OpTable) (terms []Term, err error) {
 
 // NextClause returns the next clause in the input.
 func (s *Parser) NextClause() (Term, error) {
+	s.ops.RLock()
+	defer s.ops.RUnlock()
 	term, _ := s.readTerm(1200)
 	tok := s.read()
 	if tok.Typ == OP {
