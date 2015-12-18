@@ -6,14 +6,14 @@ import (
 	"os"
 
 	"github.com/cbarrick/ripl/lang"
+	"github.com/cbarrick/ripl/lang/op"
 	"github.com/cbarrick/ripl/lang/parse"
 )
 
 func main() {
 	var t lang.Term
 	var err error
-	ops := lang.DefaultOps()
-	parser := parse.File("stdin", os.Stdin, ops)
+	parser := parse.File("stdin", os.Stdin, op.DefaultOps())
 	for t, err = parser.NextClause(); err != io.EOF; {
 		if err != nil {
 			fmt.Println(err)

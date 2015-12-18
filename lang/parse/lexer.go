@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	. "github.com/cbarrick/ripl/lang"
+	. "github.com/cbarrick/ripl/lang/op"
 )
 
 const (
