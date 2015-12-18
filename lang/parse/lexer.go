@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	. "github.com/cbarrick/ripl/lang"
 )
 
@@ -216,7 +218,7 @@ func lex(name string, input io.Reader, ops OpTable,
 
 	s := lexState{
 		name:  name,
-		input: input,
+		input: norm.NFC.Reader(input),
 		buf:   make([]byte, bufSize),
 		stack: make([]int, 0, 3),
 		ops:   ops,
