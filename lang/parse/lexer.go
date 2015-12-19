@@ -27,8 +27,9 @@ const (
 // reads the clause terminator and resumes on demand when the next token is
 // requested.
 type Lexer struct {
-	toks chan Token    // reads successive tokens
-	ctrl chan struct{} // used for flow control in the goroutine
+	toks  <-chan Token    // receive successive tokens
+	pause <-chan struct{} // used to wait on the user
+	close chan struct{}   // synchronize closing
 }
 
 // Lex constructs a Lexer for some source of Prolog lexemes.
@@ -36,18 +37,20 @@ type Lexer struct {
 // It is safe to modify the operator table until the first call to NextToken.
 func Lex(name string, input io.Reader, ops OpTable) Lexer {
 	toks := make(chan Token, readAhead)
-	ctrl := make(chan struct{})
-	go lex(name, input, ops, toks, ctrl)
+	pause := make(chan struct{})
+	close := make(chan struct{})
+	go lex(name, input, ops, toks, pause, close)
 	return Lexer{
 		toks,
-		ctrl,
+		pause,
+		close,
 	}
 }
 
 // NextToken returns the next lexeme in the input.
 func (l Lexer) NextToken() (tok Token, err error) {
 	select {
-	case <-l.ctrl:
+	case <-l.pause:
 		return l.NextToken()
 	case tok = <-l.toks:
 		switch tok.Typ {
@@ -64,26 +67,14 @@ func (l Lexer) NextToken() (tok Token, err error) {
 // Close stops the lexer's goroutine.
 // It does not close the underlying io.Reader.
 func (l Lexer) Close() {
-	select {
-	case <-l.ctrl:
-		l.Close()
-	case _, ok := <-l.toks:
-		if ok {
-			l.Close()
+	for {
+		select {
+		case <-l.pause:
+		case l.close <- struct{}{}:
+			<-l.close
+			return
 		}
-		return
-	case l.ctrl <- struct{}{}:
-		for _ = range l.toks {
-			// drain toks
-		}
-		return
 	}
-}
-
-// Reset changes the parser to use the new input and operator table.
-func (l Lexer) Reset(name string, input io.Reader, ops OpTable) {
-	l.Close()
-	go lex(name, input, ops, l.toks, l.ctrl)
 }
 
 // A Token is a lexical item.
@@ -189,19 +180,20 @@ func (typ TokType) String() string {
 // (Lexer).Close writes to the control channel. When the goroutine reads this,
 // it shuts down.
 type lexState struct {
-	name   string        // used for error messages
-	input  io.Reader     // input being lexed
-	buf    []byte        // the buffer
-	size   int           // number of valid bytes in buffer
-	start  int           // start position of this token
-	pos    int           // current position in the buffer
-	lineNo int           // number of the line being lexed (0 based)
-	colNo  int           // offset within the current line
-	stack  []int         // position history
-	ops    OpTable       // set of operators to lex
-	toks   chan Token    // channel of scanned tokens
-	ctrl   chan struct{} // control channel
-	eof    bool          // true after buffering the eof
+	name   string          // used for error messages
+	input  io.Reader       // input being lexed
+	buf    []byte          // the buffer
+	size   int             // number of valid bytes in buffer
+	start  int             // start position of this token
+	pos    int             // current position in the buffer
+	lineNo int             // number of the line being lexed (0 based)
+	colNo  int             // offset within the current line
+	stack  []int           // position history
+	ops    OpTable         // set of operators to lex
+	toks   chan<- Token    // send scanned tokens
+	pause  chan<- struct{} // send to wait for user
+	close  chan struct{}   // synchronize closing
+	eof    bool            // true after buffering the eof
 }
 
 // A stateFn is a state of the lexer, consuming runes and emiting lexemes
@@ -210,7 +202,10 @@ type stateFn func(*lexState) stateFn
 
 // lex is the entry point of the lexer's goroutine.
 func lex(name string, input io.Reader, ops OpTable,
-	toks chan Token, ctrl chan struct{}) {
+	toks chan<- Token, pause chan<- struct{}, closec chan struct{}) {
+	var (
+		closing bool // set to true when closing cleanly
+	)
 
 	s := lexState{
 		name:  name,
@@ -219,33 +214,39 @@ func lex(name string, input io.Reader, ops OpTable,
 		stack: make([]int, 0, 3),
 		ops:   ops,
 		toks:  toks,
-		ctrl:  ctrl,
+		pause: pause,
+		close: closec,
 	}
 
 	// Errors are handled by panicing the goroutine.
-	// We emit a coresponding error token and continue.
+	// Emit a coresponding error token and continue.
 	defer func() {
-		err := recover()
-		if err != nil && err != io.EOF {
-			s.toks <- Token{
-				s.name,
-				err.(error).Error(),
-				ERROR,
-				s.lineNo + 1,
-				s.colNo,
+		if !closing {
+			err := recover()
+			if err != nil && err != io.EOF {
+				s.toks <- Token{
+					s.name,
+					err.(error).Error(),
+					ERROR,
+					s.lineNo + 1,
+					s.colNo,
+				}
 			}
+			lex(name, input, ops, s.toks, s.pause, s.close)
 		}
-		lex(name, input, ops, toks, ctrl)
 	}()
 
-	// We wait until the first read, then start the main loop.
+	// Wait until the first read before starting the main loop.
 	s.wait()
 	for state := startState; state != nil; {
 		select {
 
 		// cleanup
-		case <-s.ctrl:
-			close(toks)
+		case <-s.close:
+			close(s.toks)
+			close(s.pause)
+			close(s.close)
+			closing = true
 			return
 
 		// run the state machine
@@ -392,7 +393,7 @@ func (s *lexState) emit(t TokType) {
 
 // wait blocks until the next call to (Lexer).NextToken.
 func (s *lexState) wait() {
-	s.ctrl <- struct{}{}
+	s.pause <- struct{}{}
 }
 
 // Prolog Lexer State Machine

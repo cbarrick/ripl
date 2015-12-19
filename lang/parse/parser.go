@@ -86,7 +86,8 @@ func (s *Parser) NextClause() (Term, error) {
 // Reset resets the parser to use the given input.
 // It does not close the old underlying reader.
 func (s *Parser) Reset(name string, input io.Reader, ops OpTable) {
-	s.l.Reset(name, input, ops)
+	s.l.Close()
+	s.l = Lex(name, input, ops)
 	s.ops = ops
 	s.buf = s.buf[:0]
 	s.pos = 0
