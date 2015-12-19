@@ -5,12 +5,12 @@ import (
 	"io"
 	"os"
 
-	"github.com/cbarrick/ripl/lang"
+	"github.com/cbarrick/ripl/lang/term"
 	"github.com/cbarrick/ripl/lang/parse"
 )
 
 func main() {
-	var t lang.Term
+	var t term.Term
 	var err error
 	ops := parse.DefaultOps()
 	parser := parse.File("stdin", os.Stdin, ops)

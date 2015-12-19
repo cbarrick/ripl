@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/cbarrick/ripl/lang"
+	"github.com/cbarrick/ripl/lang/term"
 )
 
 const (
@@ -23,8 +23,8 @@ type Parser struct {
 	pos     int                      // current position in the buffer
 	stack   []int                    // pos history
 	ops     OpTable                  // operators
-	vars    map[string]lang.Variable // var names
-	lastVar lang.Variable            // generates vars
+	vars    map[string]term.Variable // var names
+	lastVar term.Variable            // generates vars
 	eof     bool                     // true after reading the eof
 	err     *SyntaxError             // reported error(s)
 }
@@ -34,7 +34,7 @@ func File(name string, input io.Reader, ops OpTable) Parser {
 	return Parser{
 		l:    Lex(name, input, ops),
 		ops:  ops,
-		vars: make(map[string]lang.Variable),
+		vars: make(map[string]term.Variable),
 	}
 }
 
@@ -44,13 +44,13 @@ func String(name string, input string, ops OpTable) Parser {
 }
 
 // Quick parses the string using the default operators and returns all clauses.
-func Quick(str string) ([]lang.Term, error) {
+func Quick(str string) ([]term.Term, error) {
 	return QuickOps(str, DefaultOps())
 }
 
 // QuickOps parses the string using the given operators and returns all clauses.
-func QuickOps(str string, ops OpTable) (terms []lang.Term, err error) {
-	var t lang.Term
+func QuickOps(str string, ops OpTable) (terms []term.Term, err error) {
+	var t term.Term
 	parser := String("string", str, ops)
 	for t, err = parser.NextClause(); err == nil; {
 		if t != nil {
@@ -65,7 +65,7 @@ func QuickOps(str string, ops OpTable) (terms []lang.Term, err error) {
 }
 
 // NextClause returns the next clause in the input.
-func (s *Parser) NextClause() (lang.Term, error) {
+func (s *Parser) NextClause() (term.Term, error) {
 	term, _ := s.readTerm(1200)
 	tok := s.read()
 	if tok.Typ == OP {
@@ -171,8 +171,8 @@ func unescape(ident string) string {
 
 // readTerm reads the longest term possible starting at the next token in the
 // input such that the precedence of the term is no greater than maxprec.
-func (s *Parser) readTerm(maxprec int) (t lang.Term, prec int) {
-	var lhs lang.Term
+func (s *Parser) readTerm(maxprec int) (t term.Term, prec int) {
+	var lhs term.Term
 	var lhsprec int
 
 	s.skipWhite()
@@ -205,9 +205,9 @@ func (s *Parser) readTerm(maxprec int) (t lang.Term, prec int) {
 	return s.readOp(lhs, lhsprec, maxprec)
 }
 
-func (s *Parser) readIdent() (t lang.Term, prec int) {
+func (s *Parser) readIdent() (t term.Term, prec int) {
 	var funct = s.read().Val
-	var args []lang.Term
+	var args []term.Term
 	var next = s.peek()
 	if next.Typ == GROUP_OPEN {
 		s.read()
@@ -227,14 +227,14 @@ func (s *Parser) readIdent() (t lang.Term, prec int) {
 			s.report(unexpected(next, GROUP_CLOSE))
 		}
 	}
-	t = lang.Compound{
+	t = term.Compound{
 		Funct: unescape(funct),
 		Args:  args,
 	}
 	return t, 0
 }
 
-func (s *Parser) readVar() (t lang.Term, prec int) {
+func (s *Parser) readVar() (t term.Term, prec int) {
 	tok := s.read()
 	v := s.vars[tok.Val]
 	if v == 0 {
@@ -246,9 +246,9 @@ func (s *Parser) readVar() (t lang.Term, prec int) {
 	return t, 0
 }
 
-func (s *Parser) readNum() (t lang.Term, prec int) {
+func (s *Parser) readNum() (t term.Term, prec int) {
 	tok := s.read()
-	var n lang.Num
+	var n term.Num
 	_, err := fmt.Sscan(tok.Val, &n)
 	if err != nil {
 		s.report(wrapErr(tok, err))
@@ -257,7 +257,7 @@ func (s *Parser) readNum() (t lang.Term, prec int) {
 	return t, 0
 }
 
-func (s *Parser) readGroup() (t lang.Term, prec int) {
+func (s *Parser) readGroup() (t term.Term, prec int) {
 	tok := s.read()
 	t, _ = s.readTerm(1200)
 	switch tok = s.read(); {
@@ -269,9 +269,9 @@ func (s *Parser) readGroup() (t lang.Term, prec int) {
 	return t, 0
 }
 
-func (s *Parser) readList() (t lang.Term, prec int) {
+func (s *Parser) readList() (t term.Term, prec int) {
 	s.read()
-	var args []lang.Term
+	var args []term.Term
 	for {
 		arg, _ := s.readTerm(999)
 		if arg != nil {
@@ -281,7 +281,7 @@ func (s *Parser) readList() (t lang.Term, prec int) {
 		s.skipWhite()
 		switch next := s.read(); {
 		case next.Val == "]":
-			return lang.List{args, nil}, 0
+			return term.List{args, nil}, 0
 
 		case next.Val == "|":
 			tail, _ := s.readTerm(1200)
@@ -292,7 +292,7 @@ func (s *Parser) readList() (t lang.Term, prec int) {
 			} else {
 				s.report(unexpected(next, LIST_CLOSE))
 			}
-			return lang.List{args, tail}, 0
+			return term.List{args, tail}, 0
 
 		case next.Val == ",":
 			continue
@@ -303,7 +303,7 @@ func (s *Parser) readList() (t lang.Term, prec int) {
 	}
 }
 
-func (s *Parser) readOp(lhs lang.Term, lhsprec, maxprec int) (t lang.Term, prec int) {
+func (s *Parser) readOp(lhs term.Term, lhsprec, maxprec int) (t term.Term, prec int) {
 	s.push()
 	tok := s.read()
 
@@ -334,7 +334,7 @@ func (s *Parser) readOp(lhs lang.Term, lhsprec, maxprec int) (t lang.Term, prec 
 	}
 
 	for _, op := range ops {
-		var opterm lang.Term
+		var opterm term.Term
 		rhsprec := op.Prec
 		switch op.Typ {
 
@@ -363,9 +363,9 @@ func (s *Parser) readOp(lhs lang.Term, lhsprec, maxprec int) (t lang.Term, prec 
 				continue
 			}
 			s.pop()
-			opterm = lang.Compound{
+			opterm = term.Compound{
 				op.Name,
-				[]lang.Term{rhs},
+				[]term.Term{rhs},
 			}
 
 		case YFX, XFX:
@@ -379,15 +379,15 @@ func (s *Parser) readOp(lhs lang.Term, lhsprec, maxprec int) (t lang.Term, prec 
 				continue
 			}
 			s.pop()
-			opterm = lang.Compound{
+			opterm = term.Compound{
 				op.Name,
-				[]lang.Term{lhs, rhs},
+				[]term.Term{lhs, rhs},
 			}
 
 		case YF, XF:
-			opterm = lang.Compound{
+			opterm = term.Compound{
 				op.Name,
-				[]lang.Term{lhs},
+				[]term.Term{lhs},
 			}
 
 		default:
