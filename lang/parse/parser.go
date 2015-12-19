@@ -3,11 +3,9 @@ package parse
 import (
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	. "github.com/cbarrick/ripl/lang"
-	. "github.com/cbarrick/ripl/lang/op"
 )
 
 const (
@@ -68,8 +66,6 @@ func QuickOps(str string, ops OpTable) (terms []Term, err error) {
 
 // NextClause returns the next clause in the input.
 func (s *Parser) NextClause() (Term, error) {
-	s.ops.RLock()
-	defer s.ops.RUnlock()
 	term, _ := s.readTerm(1200)
 	tok := s.read()
 	if tok.Typ == OP {
@@ -321,7 +317,7 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 	}
 
 	// find all apllicable operators
-	ops := make([]Op, 0, 2) // the maximum number of operator choices is two
+	ops := make(OpTable, 0, 2) // the maximum number of operator choices is two
 	for _, op := range s.ops.Get(tok.Val) {
 		var ok = true
 		ok = ok && ((lhs == nil) == (op.Typ == FX || op.Typ == FY))
@@ -335,7 +331,6 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 			ops = append(ops, op)
 		}
 	}
-	sort.Sort(ByTyp{ops})
 
 	for _, op := range ops {
 		var opterm Term

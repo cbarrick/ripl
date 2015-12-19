@@ -9,8 +9,6 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
-
-	. "github.com/cbarrick/ripl/lang/op"
 )
 
 const (
@@ -27,8 +25,7 @@ const (
 // operator table to identify possible operators. The lexer runs in a separate
 // goroutine and may read ahead of the user. The lexer routine blocks after it
 // reads the clause terminator and resumes on demand when the next token is
-// requested. The operator table will be locked for reading while the lexer is
-// not paused.
+// requested.
 type Lexer struct {
 	toks chan Token    // reads successive tokens
 	ctrl chan struct{} // used for flow control in the goroutine
@@ -225,9 +222,6 @@ func lex(name string, input io.Reader, ops OpTable,
 		ctrl:  ctrl,
 	}
 
-	s.ops.RLock()
-	defer s.ops.RUnlock()
-
 	// Errors are handled by panicing the goroutine.
 	// We emit a coresponding error token and continue.
 	defer func() {
@@ -398,9 +392,7 @@ func (s *lexState) emit(t TokType) {
 
 // wait blocks until the next call to (Lexer).NextToken.
 func (s *lexState) wait() {
-	s.ops.RUnlock()
 	s.ctrl <- struct{}{}
-	s.ops.RLock()
 }
 
 // Prolog Lexer State Machine
@@ -471,7 +463,7 @@ func lexText(s *lexState) stateFn {
 
 	// operators
 	// we search through the operators, prefering longer matches
-	for _, op := range s.ops.ByLongest() {
+	for _, op := range s.ops {
 		s.push()
 		match := true
 		i := 0

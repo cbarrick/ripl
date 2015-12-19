@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cbarrick/ripl/lang/op"
 	"github.com/cbarrick/ripl/lang/parse"
 )
 
 func main() {
 	var (
-		lexer = parse.Lex("stdin", os.Stdin, op.DefaultOps())
+		lexer = parse.Lex("stdin", os.Stdin, parse.DefaultOps())
 		tok   parse.Token
 		err   error
 	)
