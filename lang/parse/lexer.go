@@ -486,7 +486,7 @@ func lexText(s *lexState) stateFn {
 	// single quoted identifier
 	if r == '\'' {
 		s.read()
-		s.acceptUntil("'", unicode.PrintRanges...)
+		s.acceptUntil("'", unicode.GraphicRanges...)
 		r = s.read()
 		if r != '\'' {
 			s.report(fmt.Errorf("expected %q, found %q", '\'', r))
@@ -504,7 +504,7 @@ func lexText(s *lexState) stateFn {
 
 	// consecutive symbol identifier
 	for {
-		s.acceptUntil(".,", unicode.Punct, unicode.Symbol)
+		s.acceptUntil(".,()[]{}|'`\"", unicode.Punct, unicode.Symbol)
 		r = s.peek()
 		if r == '.' {
 			s.push()
