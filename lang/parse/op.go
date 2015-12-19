@@ -19,14 +19,35 @@ const (
 	XF         // non-associative postfix
 )
 
-func (op *Op) prefix() bool {
-	return op.Typ == FY || op.Typ == FX
+func (typ OpType) String() string {
+	switch typ {
+	case FY:
+		return "FY"
+	case FX:
+		return "FX"
+	case XFY:
+		return "XFY"
+	case YFX:
+		return "YFX"
+	case XFX:
+		return "XFX"
+	case YF:
+		return "YF"
+	case XF:
+		return "XF"
+	default:
+		return "unknown operator type"
+	}
 }
 
-func (op *Op) infix() bool {
-	return op.Typ == XFY || op.Typ == YFX || op.Typ == XFX
+func (typ OpType) prefix() bool {
+	return typ == FY || typ == FX
 }
 
-func (op *Op) postfix() bool {
-	return op.Typ == XF || op.Typ == YF
+func (typ OpType) infix() bool {
+	return typ == XFY || typ == YFX || typ == XFX
+}
+
+func (typ OpType) postfix() bool {
+	return typ == XF || typ == YF
 }

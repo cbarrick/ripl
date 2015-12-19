@@ -30,9 +30,9 @@ func (t *OpTable) Insert(op Op) (exists bool) {
 	i := t.search(op.Name)
 	j := i
 	for j < n && (*t)[j].Name == op.Name {
-		if ((*t)[j].infix() && op.infix()) ||
-			((*t)[j].prefix() && op.prefix()) ||
-			((*t)[j].postfix() && op.postfix()) {
+		if ((*t)[j].Typ.infix() && op.Typ.infix()) ||
+			((*t)[j].Typ.prefix() && op.Typ.prefix()) ||
+			((*t)[j].Typ.postfix() && op.Typ.postfix()) {
 			(*t)[j] = op
 			exists = true
 		}
