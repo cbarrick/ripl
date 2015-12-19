@@ -7,9 +7,10 @@ import "fmt"
 type SyntaxError struct {
 	Err  error        // underlying error
 	Tok  Token        // cause of the error
-	Prev *SyntaxError // multiple errors form a linked list
+	Prev *SyntaxError // multiple errors form a stack
 }
 
+// Error returns an error message containing listing errors in the stack.
 func (e *SyntaxError) Error() (msg string) {
 	msg = fmt.Sprintf("%s:%d:%d: %s", e.Tok.Name, e.Tok.LineNo, e.Tok.ColNo, e.Err.Error())
 	if e.Prev == nil {

@@ -89,11 +89,11 @@ func (l Lexer) Reset(name string, input io.Reader, ops OpTable) {
 // A Token is a lexical item.
 // The lexer categorizes the token and adds position information.
 type Token struct {
-	Name   string
-	Val    string
-	Typ    TokType
-	LineNo int
-	ColNo  int
+	Name   string  // name of the parser/lexer that read the token.
+	Val    string  // text
+	Typ    TokType // type
+	LineNo int     // line containing the token
+	ColNo  int     // column of the first character in the token
 }
 
 func (tok Token) String() string {
