@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	. "github.com/cbarrick/ripl/lang"
+	"github.com/cbarrick/ripl/lang"
 )
 
 const (
@@ -18,15 +18,15 @@ const (
 // The Parser reads clauses from a Prolog source, using an operator table to
 // identify operators. The parser must be closed to avoid goroutine leeks.
 type Parser struct {
-	l       Lexer               // provides the Tokens
-	buf     []Token             // buffer of tokens
-	pos     int                 // current position in the buffer
-	stack   []int               // pos history
-	ops     OpTable             // operators
-	vars    map[string]Variable // var names
-	lastVar Variable            // generates vars
-	eof     bool                // true after reading the eof
-	err     *SyntaxError        // reported error(s)
+	l       Lexer                    // provides the Tokens
+	buf     []Token                  // buffer of tokens
+	pos     int                      // current position in the buffer
+	stack   []int                    // pos history
+	ops     OpTable                  // operators
+	vars    map[string]lang.Variable // var names
+	lastVar lang.Variable            // generates vars
+	eof     bool                     // true after reading the eof
+	err     *SyntaxError             // reported error(s)
 }
 
 // File creates a parser for the given reader.
@@ -34,7 +34,7 @@ func File(name string, input io.Reader, ops OpTable) Parser {
 	return Parser{
 		l:    Lex(name, input, ops),
 		ops:  ops,
-		vars: make(map[string]Variable),
+		vars: make(map[string]lang.Variable),
 	}
 }
 
@@ -44,13 +44,13 @@ func String(name string, input string, ops OpTable) Parser {
 }
 
 // Quick parses the string using the default operators and returns all clauses.
-func Quick(str string) ([]Term, error) {
+func Quick(str string) ([]lang.Term, error) {
 	return QuickOps(str, DefaultOps())
 }
 
 // QuickOps parses the string using the given operators and returns all clauses.
-func QuickOps(str string, ops OpTable) (terms []Term, err error) {
-	var t Term
+func QuickOps(str string, ops OpTable) (terms []lang.Term, err error) {
+	var t lang.Term
 	parser := String("string", str, ops)
 	for t, err = parser.NextClause(); err == nil; {
 		if t != nil {
@@ -65,7 +65,7 @@ func QuickOps(str string, ops OpTable) (terms []Term, err error) {
 }
 
 // NextClause returns the next clause in the input.
-func (s *Parser) NextClause() (Term, error) {
+func (s *Parser) NextClause() (lang.Term, error) {
 	term, _ := s.readTerm(1200)
 	tok := s.read()
 	if tok.Typ == OP {
@@ -171,8 +171,8 @@ func unescape(ident string) string {
 
 // readTerm reads the longest term possible starting at the next token in the
 // input such that the precedence of the term is no greater than maxprec.
-func (s *Parser) readTerm(maxprec int) (t Term, prec int) {
-	var lhs Term
+func (s *Parser) readTerm(maxprec int) (t lang.Term, prec int) {
+	var lhs lang.Term
 	var lhsprec int
 
 	s.skipWhite()
@@ -205,9 +205,9 @@ func (s *Parser) readTerm(maxprec int) (t Term, prec int) {
 	return s.readOp(lhs, lhsprec, maxprec)
 }
 
-func (s *Parser) readIdent() (t Term, prec int) {
+func (s *Parser) readIdent() (t lang.Term, prec int) {
 	var funct = s.read().Val
-	var args []Term
+	var args []lang.Term
 	var next = s.peek()
 	if next.Typ == GROUP_OPEN {
 		s.read()
@@ -227,14 +227,14 @@ func (s *Parser) readIdent() (t Term, prec int) {
 			s.report(unexpected(next, GROUP_CLOSE))
 		}
 	}
-	t = Compound{
+	t = lang.Compound{
 		Funct: unescape(funct),
 		Args:  args,
 	}
 	return t, 0
 }
 
-func (s *Parser) readVar() (t Term, prec int) {
+func (s *Parser) readVar() (t lang.Term, prec int) {
 	tok := s.read()
 	v := s.vars[tok.Val]
 	if v == 0 {
@@ -246,9 +246,9 @@ func (s *Parser) readVar() (t Term, prec int) {
 	return t, 0
 }
 
-func (s *Parser) readNum() (t Term, prec int) {
+func (s *Parser) readNum() (t lang.Term, prec int) {
 	tok := s.read()
-	var n Num
+	var n lang.Num
 	_, err := fmt.Sscan(tok.Val, &n)
 	if err != nil {
 		s.report(wrapErr(tok, err))
@@ -257,7 +257,7 @@ func (s *Parser) readNum() (t Term, prec int) {
 	return t, 0
 }
 
-func (s *Parser) readGroup() (t Term, prec int) {
+func (s *Parser) readGroup() (t lang.Term, prec int) {
 	tok := s.read()
 	t, _ = s.readTerm(1200)
 	switch tok = s.read(); {
@@ -269,9 +269,9 @@ func (s *Parser) readGroup() (t Term, prec int) {
 	return t, 0
 }
 
-func (s *Parser) readList() (t Term, prec int) {
+func (s *Parser) readList() (t lang.Term, prec int) {
 	s.read()
-	var args []Term
+	var args []lang.Term
 	for {
 		arg, _ := s.readTerm(999)
 		if arg != nil {
@@ -281,7 +281,7 @@ func (s *Parser) readList() (t Term, prec int) {
 		s.skipWhite()
 		switch next := s.read(); {
 		case next.Val == "]":
-			return List{args, nil}, 0
+			return lang.List{args, nil}, 0
 
 		case next.Val == "|":
 			tail, _ := s.readTerm(1200)
@@ -292,7 +292,7 @@ func (s *Parser) readList() (t Term, prec int) {
 			} else {
 				s.report(unexpected(next, LIST_CLOSE))
 			}
-			return List{args, tail}, 0
+			return lang.List{args, tail}, 0
 
 		case next.Val == ",":
 			continue
@@ -303,7 +303,7 @@ func (s *Parser) readList() (t Term, prec int) {
 	}
 }
 
-func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
+func (s *Parser) readOp(lhs lang.Term, lhsprec, maxprec int) (t lang.Term, prec int) {
 	s.push()
 	tok := s.read()
 
@@ -334,7 +334,7 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 	}
 
 	for _, op := range ops {
-		var opterm Term
+		var opterm lang.Term
 		rhsprec := op.Prec
 		switch op.Typ {
 
@@ -363,9 +363,9 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 				continue
 			}
 			s.pop()
-			opterm = Compound{
+			opterm = lang.Compound{
 				op.Name,
-				[]Term{rhs},
+				[]lang.Term{rhs},
 			}
 
 		case YFX, XFX:
@@ -379,15 +379,15 @@ func (s *Parser) readOp(lhs Term, lhsprec, maxprec int) (t Term, prec int) {
 				continue
 			}
 			s.pop()
-			opterm = Compound{
+			opterm = lang.Compound{
 				op.Name,
-				[]Term{lhs, rhs},
+				[]lang.Term{lhs, rhs},
 			}
 
 		case YF, XF:
-			opterm = Compound{
+			opterm = lang.Compound{
 				op.Name,
-				[]Term{lhs},
+				[]lang.Term{lhs},
 			}
 
 		default:
