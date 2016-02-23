@@ -17,6 +17,7 @@ type instruct struct {
 	arity  uint8
 	arg1   uint16
 	arg2   uint16
+	extra  uint16
 }
 
 const (
