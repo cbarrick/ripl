@@ -7,6 +7,7 @@ type Compound struct {
 	Args  []Term
 }
 
+// String returns the cannonical representation of the compound.
 func (c Compound) String() (str string) {
 	str = c.Funct
 	if len(c.Args) > 0 {
@@ -23,39 +24,90 @@ func (c Compound) String() (str string) {
 	return str
 }
 
-func (c Compound) BreadthFirst(f func(int, Term)) {
-	var i int
+// TopDown returns a channel that yields the subterms of c in top-down,
+// left-to-right level-order.
+func (c Compound) TopDown() chan Term {
 	ch := make(chan Term)
-	go c.bfs(ch)
-	for t := range ch {
-		f(i, t)
-		i++
+	go c.topDown(ch)
+	return ch
+}
+
+func (c Compound) topDown(ch chan Term) {
+	defer close(ch)
+
+	const (
+		init = 16 // initial size of the queue's buffer
+	)
+
+	var (
+		queue = make(chan Term, init)
+	)
+
+	// ensures that there is room for n more terms in the queue
+	ensure := func(n int) {
+		l := len(queue)
+		c := cap(queue)
+		if c < l+n {
+			for c < n {
+				c = c << 1
+			}
+			q := make(chan Term, c)
+			for 0 < l {
+				q <- <-queue
+				l--
+			}
+			close(queue)
+			queue = q
+		}
+	}
+
+	queue <- c
+	for len(queue) > 0 {
+		t := <-queue
+		ch <- t
+		if t, ok := t.(Compound); ok {
+			ensure(len(t.Args))
+			for i := range t.Args {
+				queue <- t.Args[i]
+			}
+		}
 	}
 }
 
-func (c Compound) bfs(ch chan Term) {
-	ch <- c
-	subs := make([]chan Term, 0, len(c.Args))
-	for _, arg := range c.Args {
-		if comp, ok := arg.(Compound); ok {
-			sub := make(chan Term)
-			subs = append(subs, sub)
-			go comp.bfs(sub)
-			ch <- <-sub
-		} else {
-			ch <- arg
+// BottomUp returns a channel that yields the subterms of c in bottom-up,
+// left-to-right level-order.
+func (c Compound) BottomUp() chan Term {
+	ch := make(chan Term)
+	go c.bottomUp(ch)
+	return ch
+}
+
+func (c Compound) bottomUp(ch chan Term) {
+	defer close(ch)
+
+	var (
+		terms = [][]Term{[]Term{c}}
+		depth int
+	)
+
+	for {
+		var level []Term
+		for i := range terms[depth] {
+			if t, ok := terms[depth][i].(Compound); ok {
+				level = append(level, t.Args...)
+			}
 		}
-	}
-	i := 0
-	for len(subs) > 0 {
-		val := <-subs[i]
-		if val == nil {
-			subs = append(subs[:i], subs[i+1:]...)
-		} else {
-			ch <- val
-			i += 1
-			i %= len(subs)
+		if level == nil {
+			break
 		}
+		terms = append(terms, level)
+		depth++
 	}
-	close(ch)
+
+	for 0 <= depth {
+		for i := range terms[depth] {
+			ch <- terms[depth][i]
+		}
+		depth--
+	}
 }
