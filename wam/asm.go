@@ -21,7 +21,11 @@ func (p Program) String() (str string) {
 }
 
 // Scan reads a program in WAM assembly.
+// The state of the program is undifined if scanning fails.
 func (p *Program) Scan(state fmt.ScanState, verb rune) (err error) {
+
+	// readLine skips to the next non-space character and reads up to but not
+	// including the next newline rune.
 	readLine := func() (line []byte, err error) {
 		line, err = state.Token(true, func(r rune) bool {
 			return r != '\n'
@@ -29,6 +33,8 @@ func (p *Program) Scan(state fmt.ScanState, verb rune) (err error) {
 		return line, err
 	}
 
+	// parseConst trims whitespace around the buffer and parses the rest as
+	// an integer, float, or quoted string.
 	parseConst := func(buf []byte) (c constant, err error) {
 		str := strings.Trim(string(buf), " \t\r\n")
 		c, err = strconv.ParseInt(str, 0, 64)
@@ -41,45 +47,49 @@ func (p *Program) Scan(state fmt.ScanState, verb rune) (err error) {
 		return c, err
 	}
 
-	var buf []byte
-	buf, err = readLine()
-	switch {
-	case strings.HasPrefix(string(buf), "CONSTANTS"):
-		for err == nil {
-			buf, err = readLine()
-			if err == nil {
-				var c constant
-				c, err = parseConst(buf)
-				if err == nil {
-					p.cids[c] = cid(len(p.constants))
-					p.constants = append(p.constants, c)
-				} else {
-					err = nil
-					break
-				}
-			}
-		}
-		if !strings.HasPrefix(string(buf), "TEXT") {
-			return fmt.Errorf("expecting text segment")
-		}
-		fallthrough
+	var line []byte
 
-	case strings.HasPrefix(string(buf), "TEXT"):
-		for {
-			var i instruct
-			state.SkipSpace()
-			err = i.Scan(state, verb)
-			if err != nil || i.opcode == eot {
+	// To read the CONSTANTS segment, we first read the header, then read lines
+	// until one fails to be a valid constant. That line is assumed to be the
+	// header of the next segment.
+	line, err = readLine()
+	if !strings.HasPrefix(string(line), "CONSTANTS") {
+		return fmt.Errorf("expecting constants segment")
+	}
+	for err == nil {
+		line, err = readLine()
+		if err == nil {
+			var c constant
+			c, err = parseConst(line)
+			if err == nil {
+				p.cids[c] = cid(len(p.constants))
+				p.constants = append(p.constants, c)
+			} else {
+				err = nil
 				break
 			}
-			p.code = append(p.code, i)
 		}
+	}
+
+	// To read the TEXT segment, we check that the buffer has been set to the
+	// header, then scan instructions until there are no more (indicated by eot).
+	if !strings.HasPrefix(string(line), "TEXT") {
+		return fmt.Errorf("expecting text segment")
+	}
+	for {
+		var i instruct
+		state.SkipSpace()
+		err = i.Scan(state, verb)
+		if err != nil || i.opcode == eot {
+			break
+		}
+		p.code = append(p.code, i)
 	}
 
 	return err
 }
 
-// String returns the instruction as WAM assembly.
+// String returns WAM assembly for the instruction.
 func (i instruct) String() string {
 	switch i.opcode {
 	case put_struct:
@@ -107,8 +117,8 @@ func (i instruct) String() string {
 
 // Scan reads an instruction in WAM assembly.
 func (i *instruct) Scan(state fmt.ScanState, verb rune) error {
-	// scans the next non-space rune
-	// returns an error if the scanned rune is not r
+	// expect scans the next non-space rune
+	// and returns an error if the scanned rune is not r
 	var expect func(rune) error
 	expect = func(r rune) error {
 		s, _, err := state.ReadRune()
@@ -120,7 +130,7 @@ func (i *instruct) Scan(state fmt.ScanState, verb rune) error {
 		return err
 	}
 
-	// scans a 'cid/arity' pair
+	// functor scans a 'cid/arity' pair
 	functor := func() (funct cid, ar arity, err error) {
 		var buf []byte
 		var n uint64
@@ -142,7 +152,7 @@ func (i *instruct) Scan(state fmt.ScanState, verb rune) error {
 		return funct, ar, err
 	}
 
-	// scans a register argument '$n'
+	// register scans a register argument '$n'
 	register := func() (reg register, err error) {
 		var buf []byte
 		var n uint64
@@ -157,6 +167,7 @@ func (i *instruct) Scan(state fmt.ScanState, verb rune) error {
 		return reg, err
 	}
 
+	// We switch over the opcode to handle different instruction formats.
 	opcode, err := state.Token(true, nil)
 	switch string(opcode) {
 	case "put_struct":
@@ -195,8 +206,12 @@ func (i *instruct) Scan(state fmt.ScanState, verb rune) error {
 		i.opcode = unify_val
 		i.reg1, err = register()
 
+	// If the size of the opcode is 0, then we've reached the end of the input
+	// and set the instruct to be an eot marker. Otherwise we return an error.
 	default:
-		if len(opcode) > 0 {
+		if len(opcode) == 0 {
+			i.opcode = eot
+		} else {
 			err = fmt.Errorf("unknown opcode %v", opcode)
 		}
 	}

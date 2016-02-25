@@ -1,17 +1,17 @@
 package wam
 
-import (
-	"reflect"
+import "github.com/cbarrick/ripl/lang/term"
 
-	"github.com/cbarrick/ripl/lang/term"
-)
-
+// A Program is a bytecode program for Ripl's implementation of the Warren
+// Abstract Machine (WAM).
 type Program struct {
 	code      []instruct
 	constants []constant
 	cids      map[constant]cid
 }
 
+// An instruct is a bytecode WAM instruction.
+// It is carefully crafted to fit in a 64bit word.
 type instruct struct {
 	opcode
 	arity
@@ -20,6 +20,7 @@ type instruct struct {
 	reg2 register
 }
 
+// Various low-level types.
 type (
 	opcode   uint8
 	arity    uint8
@@ -28,6 +29,7 @@ type (
 	constant interface{}
 )
 
+// The list of known opcodes.
 const (
 	eot opcode = iota
 	put_struct
@@ -93,7 +95,7 @@ func (p *Program) CompileHead(head term.Compound) {
 			}
 
 		default:
-			panic("cannot compile type " + reflect.TypeOf(t).Name())
+			panic("unknow term type")
 		}
 	}
 }
