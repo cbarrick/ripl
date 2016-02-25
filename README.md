@@ -1,14 +1,19 @@
 Ripl
 ==================================================
 
-Ripl is a parser for Prolog with UTF-8 support. One day it may become something more.
-
-The programs `test/parse.go` and `test/lex.go` take in Prolog clauses on stdin and print the parse tree or lexemes to stdout.
+Ripl will be a Prolog implementation in Go.
 
 Dependencies
 --------------------------------------------------
-- golang.org/x/text/unicode/norm is used for unicode normalization.
+- http://golang.org/x/text/unicode/norm is used for unicode normalization.
 
-TODO:
+Checklist
 --------------------------------------------------
-- [ ] Make a todo list.
+- [X] Prolog Parser
+	- [X] UTF-8 support
+	- [X] Arbitrary operators
+- [ ] Prolog -> WAM compiler
+- [ ] WAM evaluator
+- [ ] Database/modules
+- [ ] REPL/frontend
+- [ ] etc.
