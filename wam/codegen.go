@@ -49,7 +49,71 @@ func NewProg() *Program {
 // CompileQuery compiles a term as a query
 // and appends the instructions to the program's code segment.
 func (p *Program) CompileQuery(q term.Compound) {
-	panic("not implemented")
+	var (
+		i     register
+		reg   = i + 1
+		vars  = make(map[term.Variable]register)
+		codes = make(map[string][]instruct)
+		seen  = make(map[register]bool)
+	)
+
+	// Code generation requires two traversals of the query term. First we do a
+	// top-down traversal to figure out which registers each term should use.
+	// The instructions for each term are generated and saved into the codes
+	// map. Then we do a bottom-up traversal to get the proper order of the
+	// instructions and to distinguish between set_var and set_val instructions.
+
+	for t := range q.TopDown() {
+		switch t := t.(type) {
+		case term.Compound:
+			str := t.String()
+			codes[str] = append(codes[str], instruct{
+				opcode: put_struct,
+				arity:  arity(len(t.Args)),
+				cid:    p.cidOf(t.Funct),
+				reg1:   i,
+			})
+			for _, arg := range t.Args {
+				if arg, ok := arg.(term.Variable); ok {
+					if vars[arg] != 0 {
+						codes[str] = append(codes[str], instruct{
+							opcode: set_var,
+							reg1:   vars[arg],
+						})
+						continue
+					}
+					vars[arg] = reg
+				}
+				codes[str] = append(codes[str], instruct{
+					opcode: set_var,
+					reg1:   reg,
+				})
+				reg++
+			}
+			i++
+
+		case term.Variable:
+			if vars[t] == i {
+				i++
+			}
+
+		default:
+			panic("unknow term type")
+		}
+	}
+
+	for t := range q.BottomUp() {
+		code := codes[t.String()]
+		for i := range code {
+			if code[i].opcode == set_var {
+				if seen[code[i].reg1] {
+					code[i].opcode = set_val
+				}
+			}
+			seen[code[i].reg1] = true
+		}
+		p.code = append(p.code, code...)
+	}
 }
 
 // CompileHead compiles a term as a clause head
