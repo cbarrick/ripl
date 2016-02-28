@@ -1,114 +1,201 @@
 package wam
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"strconv"
-	"strings"
-	"unicode"
 )
 
 // String returns WAM assembly for the program.
 func (p Program) String() (str string) {
-	str += "CONSTANTS"
-	for _, t := range p.constants {
-		str += fmt.Sprintf("\n\t%#v", t)
+	var buf bytes.Buffer
+	buf.WriteString(".data\n")
+	for c, id := range p.consts {
+		buf.WriteByte('\t')
+		buf.WriteString(strconv.Itoa(int(id)))
+		buf.WriteString(": ")
+		switch c.(type) {
+		case int:
+			buf.WriteString("int ")
+			buf.WriteString(strconv.Itoa(c.(int)))
+		case float64:
+			buf.WriteString("float ")
+			buf.WriteString(strconv.FormatFloat(c.(float64), 'g', -1, 64))
+		case string:
+			buf.WriteString("funct ")
+			buf.WriteString(c.(string))
+		}
+		buf.WriteByte('\n')
 	}
-	str += "\nTEXT"
-	for _, ins := range p.code {
-		str += fmt.Sprintf("\n\t%v", ins)
+	buf.WriteString(".text\n")
+	for _, i := range p.code {
+		buf.WriteByte('\t')
+		buf.WriteString(i.String())
+		buf.WriteByte('\n')
 	}
-	return str
+	return buf.String()
 }
 
-// Scan reads a program in WAM assembly.
-// The state of the program is undifined if scanning fails.
+// Scan builds the program from WAM assembly.
 func (p *Program) Scan(state fmt.ScanState, verb rune) (err error) {
-
-	// readLine skips to the next non-space character and reads up to but not
-	// including the next newline rune.
-	readLine := func() (line []byte, err error) {
-		line, err = state.Token(true, func(r rune) bool {
-			return r != '\n'
-		})
-		return line, err
-	}
-
-	// parseConst trims whitespace around the buffer and parses the rest as
-	// an integer, float, or quoted string.
-	parseConst := func(buf []byte) (c constant, err error) {
-		str := strings.Trim(string(buf), " \t\r\n")
-		c, err = strconv.ParseInt(str, 0, 64)
-		if err != nil {
-			c, err = strconv.ParseFloat(str, 64)
-			if err != nil {
-				c, err = strconv.Unquote(str)
-			}
-		}
-		return c, err
-	}
-
-	var line []byte
-
-	// To read the CONSTANTS segment, we first read the header, then read lines
-	// until one fails to be a valid constant. That line is assumed to be the
-	// header of the next segment.
-	line, err = readLine()
-	if !strings.HasPrefix(string(line), "CONSTANTS") {
-		return fmt.Errorf("expecting constants segment")
-	}
-	for err == nil {
-		line, err = readLine()
-		if err == nil {
-			var c constant
-			c, err = parseConst(line)
-			if err == nil {
-				p.cids[c] = cid(len(p.constants))
-				p.constants = append(p.constants, c)
-			} else {
-				err = nil
-				break
-			}
-		}
-	}
-
-	// To read the TEXT segment, we check that the buffer has been set to the
-	// header, then scan instructions until there are no more (indicated by eot).
-	if !strings.HasPrefix(string(line), "TEXT") {
-		return fmt.Errorf("expecting text segment")
-	}
 	for {
-		var i instruct
+		var section string
 		state.SkipSpace()
-		err = i.Scan(state, verb)
-		if err != nil || i.opcode == eot {
-			break
+		_, err = fmt.Fscanf(state, ".%v", &section)
+		if err == nil {
+			switch section {
+			case "text":
+				err = p.scanText(state)
+			case "data":
+				err = p.scanData(state)
+			default:
+				return fmt.Errorf("unknown section %q", section)
+			}
 		}
-		p.code = append(p.code, i)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// scanText repetedly scans instructions
+// and adds them to the program's code segment
+func (p *Program) scanText(state fmt.ScanState) (err error) {
+	for {
+		var (
+			i instruct
+			r rune
+		)
+		state.SkipSpace()
+		if r, _, err = state.ReadRune(); err != nil {
+			return err
+		}
+		if err = state.UnreadRune(); err != nil {
+			return err
+		}
+		if r == '.' {
+			return err
+		}
+		if _, err = fmt.Fscanf(state, "%v", &i); err != nil {
+			return err
+		} else {
+			p.code = append(p.code, i)
+			continue
+		}
+	}
+}
+
+// scanData repetedly scans constants
+// and adds them to the program's constants
+func (p *Program) scanData(state fmt.ScanState) (err error) {
+	for {
+		var (
+			id cid
+			c  constant
+			r  rune
+		)
+		state.SkipSpace()
+		if r, _, err = state.ReadRune(); err != nil {
+			return err
+		}
+		if err = state.UnreadRune(); err != nil {
+			return err
+		}
+		if r == '.' {
+			return err
+		}
+		if id, c, err = scanConst(state); err != nil {
+			return err
+		} else {
+			p.consts[c] = id
+			continue
+		}
+	}
+}
+
+func scanConst(state fmt.ScanState) (id cid, c constant, err error) {
+	var typ string
+
+	// scan the id and type
+	if _, err = fmt.Fscanf(state, "%v: %v ", &id, &typ); err != nil {
+		return id, c, err
 	}
 
-	return err
+	// the format of the data depends on the type
+	switch typ {
+	case "int":
+		var val int
+		_, err = fmt.Fscanf(state, "%v", val)
+		return id, val, err
+
+	case "float":
+		var val float64
+		_, err = fmt.Fscanf(state, "%v", val)
+		return id, val, err
+
+	case "funct":
+		state.SkipSpace()
+		var r rune
+		if r, _, err = state.ReadRune(); err != nil {
+			return id, c, err
+		}
+
+		// quoted
+		if r == '\'' {
+			var buf bytes.Buffer
+			r, _, err = state.ReadRune()
+			for r != '\'' && err == nil {
+				buf.WriteRune(r)
+				r, _, err = state.ReadRune()
+			}
+			if err != nil {
+				return id, c, err
+			}
+			return id, buf.String(), err
+		}
+
+		// unquoted
+		var val string
+		if err = state.UnreadRune(); err != nil {
+			return id, val, err
+		}
+		if _, err = fmt.Fscanf(state, "%v", &val); err != nil {
+			return id, val, err
+		}
+		return id, val, err
+
+	default:
+		return id, c, fmt.Errorf("unknown type %q", typ)
+	}
 }
+
+// Instructions:
+// --------------------------------------------------
 
 // String returns WAM assembly for the instruction.
 func (i instruct) String() string {
 	switch i.opcode {
 	case put_struct:
-		return fmt.Sprintf("put_struct %v/%d, $%d", i.cid, i.arity, i.reg1)
+		return fmt.Sprintf("put_struct %v/%v, $%v", i.cid, i.arity, i.reg1)
 
 	case get_struct:
-		return fmt.Sprintf("get_struct %v/%d, $%d", i.cid, i.arity, i.reg1)
+		return fmt.Sprintf("get_struct %v/%v, $%v", i.cid, i.arity, i.reg1)
 
 	case set_var:
-		return fmt.Sprintf("set_var $%d", i.reg1)
+		return fmt.Sprintf("set_var $%v", i.reg1)
 
 	case set_val:
-		return fmt.Sprintf("set_val $%d", i.reg1)
+		return fmt.Sprintf("set_val $%v", i.reg1)
 
 	case unify_var:
-		return fmt.Sprintf("unify_var $%d", i.reg1)
+		return fmt.Sprintf("unify_var $%v", i.reg1)
 
 	case unify_val:
-		return fmt.Sprintf("unify_val $%d", i.reg1)
+		return fmt.Sprintf("unify_val $%v", i.reg1)
 
 	default:
 		return fmt.Sprintf("%#v", i)
@@ -116,105 +203,45 @@ func (i instruct) String() string {
 }
 
 // Scan reads an instruction in WAM assembly.
-func (i *instruct) Scan(state fmt.ScanState, verb rune) error {
-	// expect scans the next non-space rune
-	// and returns an error if the scanned rune is not r
-	var expect func(rune) error
-	expect = func(r rune) error {
-		s, _, err := state.ReadRune()
-		if err == nil && unicode.IsSpace(s) {
-			return expect(r)
-		} else if err == nil && r != s {
-			err = fmt.Errorf("expected %q, found %q", r, s)
-		}
+func (i *instruct) Scan(state fmt.ScanState, verb rune) (err error) {
+	var opcode string
+	_, err = fmt.Fscanf(state, "%s", &opcode)
+	if err != nil {
 		return err
 	}
-
-	// functor scans a 'cid/arity' pair
-	functor := func() (funct cid, ar arity, err error) {
-		var buf []byte
-		var n uint64
-		buf, err = state.Token(true, unicode.IsNumber)
-		if err == nil {
-			n, err = strconv.ParseUint(string(buf), 0, 16)
-			funct = cid(n)
-			if err == nil {
-				err = expect('/')
-				if err == nil {
-					buf, err = state.Token(true, unicode.IsNumber)
-					if err == nil {
-						n, err = strconv.ParseUint(string(buf), 0, 8)
-						ar = arity(n)
-					}
-				}
-			}
-		}
-		return funct, ar, err
-	}
-
-	// register scans a register argument '$n'
-	register := func() (reg register, err error) {
-		var buf []byte
-		var n uint64
-		err = expect('$')
-		if err == nil {
-			buf, err = state.Token(true, unicode.IsNumber)
-			if err == nil {
-				n, err = strconv.ParseUint(string(buf), 0, 8)
-				reg = register(n)
-			}
-		}
-		return reg, err
-	}
-
-	// We switch over the opcode to handle different instruction formats.
-	opcode, err := state.Token(true, nil)
-	switch string(opcode) {
+	state.SkipSpace()
+	switch opcode {
 	case "put_struct":
 		i.opcode = put_struct
-		i.cid, i.arity, err = functor()
-		if err == nil {
-			err = expect(',')
-			if err == nil {
-				i.reg1, err = register()
-			}
-		}
+		_, err = fmt.Fscanf(state, "%d/%d, $%d", &i.cid, &i.arity, &i.reg1)
+		return err
 
 	case "get_struct":
 		i.opcode = get_struct
-		i.cid, i.arity, err = functor()
-		if err == nil {
-			err = expect(',')
-			if err == nil {
-				i.reg1, err = register()
-			}
-		}
+		_, err = fmt.Fscanf(state, "%d/%d, $%d", &i.cid, &i.arity, &i.reg1)
+		return err
 
 	case "set_var":
 		i.opcode = set_var
-		i.reg1, err = register()
+		_, err = fmt.Fscanf(state, "$%d", &i.reg1)
+		return err
 
 	case "set_val":
 		i.opcode = set_val
-		i.reg1, err = register()
+		_, err = fmt.Fscanf(state, "$%d", &i.reg1)
+		return err
 
 	case "unify_var":
 		i.opcode = unify_var
-		i.reg1, err = register()
+		_, err = fmt.Fscanf(state, "$%d", &i.reg1)
+		return err
 
 	case "unify_val":
 		i.opcode = unify_val
-		i.reg1, err = register()
+		_, err = fmt.Fscanf(state, "$%d", &i.reg1)
+		return err
 
-	// If the size of the opcode is 0, then we've reached the end of the input
-	// and set the instruct to be an eot marker. Otherwise we return an error.
 	default:
-		if len(opcode) == 0 {
-			i.opcode = eot
-		} else {
-			err = fmt.Errorf("unknown opcode %v", opcode)
-		}
+		return fmt.Errorf("unknown opcode %q", opcode)
 	}
-
-	return err
 }

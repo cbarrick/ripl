@@ -5,9 +5,8 @@ import "github.com/cbarrick/ripl/lang/term"
 // A Program is a bytecode program for Ripl's implementation of the Warren
 // Abstract Machine (WAM).
 type Program struct {
-	code      []instruct
-	constants []constant
-	cids      map[constant]cid
+	code   []instruct
+	consts map[constant]cid
 }
 
 // An instruct is a bytecode WAM instruction.
@@ -42,7 +41,7 @@ const (
 
 func NewProg() *Program {
 	return &Program{
-		cids: make(map[constant]cid),
+		consts: make(map[constant]cid),
 	}
 }
 
@@ -167,11 +166,10 @@ func (p *Program) CompileHead(head term.Compound) {
 // cidOf returns the id of program constant c,
 // adding c to the program if needed.
 func (p *Program) cidOf(c constant) (id cid) {
-	id = p.cids[c]
+	id = p.consts[c]
 	if id == 0 {
-		id = cid(len(p.cids))
-		p.cids[c] = id
-		p.constants = append(p.constants, c)
+		id = cid(len(p.consts))
+		p.consts[c] = id
 	}
 	return id
 }
