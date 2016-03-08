@@ -1,8 +1,9 @@
-package parse
+package lang
+
+import "sort"
 
 // These are the default operators.
-// It is important that this literal be propperly sorted.
-var defaultOps = OpTable{
+var defaultOps = []Op{
 	{700, XFX, "\\=@="},
 	{400, YFX, "rdiv"},
 	{1050, XFY, "*->"},
@@ -23,8 +24,8 @@ var defaultOps = OpTable{
 	{1050, XFY, "->"},
 	{400, YFX, "//"},
 	{500, YFX, "/\\"},
-	{1200, FX, ":-"},
 	{1200, XFX, ":-"},
+	{1200, FX, ":-"},
 	{700, XFX, ":<"},
 	{990, XFX, ":="},
 	{400, YFX, "<<"},
@@ -57,4 +58,8 @@ var defaultOps = OpTable{
 	{200, FY, "\\"},
 	{200, XFY, "^"},
 	{1100, XFY, "|"},
+}
+
+func init() {
+	sort.Sort(opOrd(defaultOps))
 }
