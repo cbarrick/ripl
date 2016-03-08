@@ -8,7 +8,8 @@ import (
 )
 
 func ExampleLex() {
-	for l := range lang.Lex(strings.NewReader("a + b * c - d.")) {
+	var clause = "a + b * c - d."
+	for l := range lang.Lex(strings.NewReader(clause)) {
 		fmt.Println(&l)
 	}
 	// Output:
@@ -26,4 +27,18 @@ func ExampleLex() {
 	// " " (Space)
 	// "d" (Funct)
 	// '.' (Terminal)
+}
+
+func ExampleLex_eof() {
+	// Terminal Lexemes are inserted at EOF
+	var clause = "foo(bar)"
+	for l := range lang.Lex(strings.NewReader(clause)) {
+		fmt.Println(&l)
+	}
+	// Output:
+	// "foo" (Funct)
+	// '(' (Paren)
+	// "bar" (Funct)
+	// ')' (Paren)
+	// '\x03' (Terminal)
 }

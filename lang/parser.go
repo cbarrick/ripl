@@ -78,6 +78,11 @@ func (t *Term) Parse(r io.Reader, ops OpTable, heap []Term) ([]Term, error) {
 	if !ok {
 		return heap, t.val.(error)
 	}
+
+	if p.buf.Typ != TerminalTok {
+		return heap, fmt.Errorf("operator priority clash")
+	}
+
 	return p.heap, nil
 }
 

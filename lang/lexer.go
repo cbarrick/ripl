@@ -13,6 +13,9 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+// eof is used as a sentinal value for the state-machine.
+const eof = '\x03'
+
 // Norm is the form to which unicode input is normalized.
 const Norm = norm.NFD
 
@@ -123,10 +126,11 @@ type lexer struct {
 	vars    map[string]uint   // maintains ids for variables
 	buf     bytes.Buffer      // buffer for current token
 	runeBuf [utf8.UTFMax]byte // scratch space for decoding runes
-	peeked  rune              // result of last peek
-	depth   uint              // number of unclosed parens, braces, and brackets
-	line    uint              // zero-based line for the start of this token
-	col     uint              // zero-based column for the start of this token
+	cur     rune              // current rune, not yet in buf
+	depth   uint              // number of unclosed parens etc.
+	line    uint              // zero-based line position of buf
+	col     uint              // zero-based column position of buf
+	eof     bool
 }
 
 // lexStates encode the lexer state-machine. lexStates are functions that
@@ -158,6 +162,9 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 		close(ret)
 	}()
 
+	// prime the buffer
+	l.read()
+
 	// Under normal circumstances, the state-machine halts by returning nil.
 	state := startState
 	for state != nil {
@@ -165,41 +172,44 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 	}
 }
 
-// peek reads but does not consume the next rune from the underlying reader.
-func (l *lexer) peek() (r rune) {
-	if l.peeked != 0 {
-		return l.peeked
+// read consumes the next rune in the stream. The rune is added to the buffer.
+func (l *lexer) read() (r rune) {
+	if l.cur != 0 && l.cur != eof {
+		l.buf.WriteRune(l.cur)
 	}
+
+	if l.eof {
+		l.cur = eof
+		return
+	}
+
 	var i int
 	for !utf8.FullRune(l.runeBuf[:i]) {
 		n, err := l.r.Read(l.runeBuf[i : i+1])
-		if err != nil {
+		i += n
+		if err == io.EOF {
+			l.eof = true
+		} else if err != nil {
 			panic(err)
 		}
-		i += n
+		if n == 0 {
+			break
+		}
 	}
-	if utf8.Valid(l.runeBuf[:i]) {
-		r, _ = utf8.DecodeRune(l.runeBuf[:i])
-		l.peeked = r
+	if i > 0 {
+		if utf8.Valid(l.runeBuf[:i]) {
+			r, _ = utf8.DecodeRune(l.runeBuf[:i])
+			l.cur = r
+		} else {
+			panic(ErrInvalidEnc)
+		}
 	} else {
-		panic(ErrInvalidEnc)
+		l.cur = eof
 	}
 	return r
 }
 
-// read consumes the next rune in the stream. The rune is added to the buffer.
-func (l *lexer) read() (r rune) {
-	if l.peeked != 0 {
-		r = l.peeked
-	} else {
-		r = l.peek()
-	}
-	l.buf.WriteRune(r)
-	l.peeked = 0
-	return r
-}
-
-// readTo reads from the underlying reader through the next occurence of delim.
+// readTo reads from the underlying reader up to the next occurence of delim.
 func (l *lexer) readTo(delim rune) {
 	var r rune
 	for r != delim {
@@ -213,8 +223,7 @@ func (l *lexer) readTo(delim rune) {
 //
 // It will never consume the '!' cut symbol or the ',' comma.
 func (l *lexer) accept(chars string, ranges ...*unicode.RangeTable) (ok bool) {
-	var r rune
-	r = l.peek()
+	var r = l.cur
 	if r == '!' || r == ',' {
 		return false
 	}
@@ -244,7 +253,7 @@ func (l *lexer) emit(typ LexType, val interface{}) {
 	for i := l.buf.Len(); 0 < i; {
 		r, size, err := l.buf.ReadRune()
 		if err != nil {
-			panic(fmt.Errorf("unexpected error: %v", err.Error()))
+			panic(err)
 		}
 		switch r {
 		case '\r':
@@ -268,7 +277,7 @@ func (l *lexer) emit(typ LexType, val interface{}) {
 var startState lexState = lexAny
 
 func lexAny(l *lexer) lexState {
-	r := l.peek()
+	r := l.cur
 	switch {
 
 	// whitespace and comments
@@ -300,7 +309,7 @@ func lexAny(l *lexer) lexState {
 	// numbers may be preceeded by a negative
 	case r == '-':
 		l.read()
-		r = l.peek()
+		r = l.cur
 		if r < '0' || '9' < r {
 			return lexSymbols
 		}
@@ -321,9 +330,14 @@ func lexAny(l *lexer) lexState {
 	case unicode.IsLetter(r):
 		return lexLetters
 
-		// consecutive symbols are also functors
+	// consecutive symbols are also functors
 	case strings.ContainsRune(ASCIISymbols, r) || unicode.IsOneOf(UnicodeSymbols, r):
 		return lexSymbols
+
+	// auto-insert terminal at eof
+	case r == eof:
+		l.emit(TerminalTok, eof)
+		return nil
 
 	// all other runes are unacceptable
 	default:
@@ -332,7 +346,8 @@ func lexAny(l *lexer) lexState {
 }
 
 func lexParen(l *lexer) lexState {
-	r := l.read()
+	r := l.cur
+	l.read()
 	if strings.ContainsRune("([{", r) {
 		l.depth++
 	} else {
@@ -345,8 +360,8 @@ func lexParen(l *lexer) lexState {
 func lexDot(l *lexer) lexState {
 	l.read()
 	if l.depth == 0 {
-		r := l.peek()
-		if unicode.IsSpace(r) {
+		r := l.cur
+		if r == eof || unicode.IsSpace(r) {
 			l.emit(TerminalTok, '.')
 			return nil
 		}
