@@ -11,7 +11,7 @@ func ExampleParse() {
 	var t = new(lang.Term)
 	var heap = make([]lang.Term, 0, 8)
 	var ops = lang.DefaultOps()
-	heap, err := t.Parse(strings.NewReader("a + b * c - d."), ops, heap)
+	heap, err := t.Parse(strings.NewReader("a + b * c - d"), ops, heap)
 	if err != nil {
 		fmt.Println("Error:", err)
 	}
