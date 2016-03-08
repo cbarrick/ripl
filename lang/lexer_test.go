@@ -3,13 +3,12 @@ package lang_test
 import (
 	"fmt"
 	"strings"
-	"testing"
 
 	"github.com/cbarrick/ripl/lang"
 )
 
-func TestLex(*testing.T) {
-	for l := range lang.Lex(strings.NewReader("a + b * c - d. ")) {
+func ExampleLex() {
+	for l := range lang.Lex(strings.NewReader("a + b * c - d.")) {
 		fmt.Println(&l)
 	}
 	// Output:

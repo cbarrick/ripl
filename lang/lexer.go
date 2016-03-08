@@ -150,7 +150,9 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 	// If so, a LexErr is emitted before closing.
 	defer func() {
 		err := recover()
-		if err != nil {
+		if err == io.EOF {
+			l.emit(TerminalTok, '.')
+		} else if err != nil {
 			l.emit(LexErr, err.(error))
 		}
 		close(ret)
