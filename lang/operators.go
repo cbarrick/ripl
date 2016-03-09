@@ -14,7 +14,7 @@ type Op struct {
 
 // An OpType classifies types of operators.
 // The zero-value is invalid; OpTypes must be initialized.
-type OpType uint
+type OpType int
 
 // The types of operators
 const (

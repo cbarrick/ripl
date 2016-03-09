@@ -45,7 +45,7 @@ type Lexeme struct {
 }
 
 // A LexType classifies types of lexeme.
-type LexType uint
+type LexType int
 
 // The types of lexeme.
 // The Go type of a lexeme's value can be infered from its LexType.

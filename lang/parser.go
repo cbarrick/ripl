@@ -20,7 +20,7 @@ type Term struct {
 }
 
 // TermType identifies a type of term (atom, number, etc).
-type TermType uint
+type TermType int
 
 // Types of term.
 const (
