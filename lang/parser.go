@@ -31,6 +31,11 @@ const (
 	List
 )
 
+// Root returns the root term of the clause.
+func (c Clause) Root() Term {
+	return c[len(c)-1]
+}
+
 // Atomic returns true if t is not a compound term.
 func (t Term) Atomic() bool {
 	return len(t.Args) == 0
@@ -41,7 +46,7 @@ func (t Term) Atom() bool {
 	return t.Typ == Structure && t.Atomic()
 }
 
-// String returns the canonical string form of t.
+// String returns the canonical form of t.
 func (t Term) String() string {
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprint(t.Val))
@@ -61,14 +66,9 @@ func (t Term) String() string {
 	return buf.String()
 }
 
-// Root returns the root term of the clause.
-func (c Clause) Root() Term {
-	return c[len(c)-1]
-}
-
 // Parse reads a clause from r with respect to some operator table. Subterms are
-// appended onto heap in bottom-up level-order, and a new slice is returned if
-// the heap is reallocated.
+// appended onto the heap in bottom-up level-order. The new heap slice is
+// returned, and the backing array may be reallocated.
 func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, error) {
 	// parse the term
 	var start = len(heap)
