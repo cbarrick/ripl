@@ -11,11 +11,9 @@ import (
 
 // A Term is a Prolog term. A term is a syntax tree of functors and arguments.
 type Term struct {
-	typ       TermType
-	val       interface{}
-	bootstrap [16]uint16 // initial storage for args
-	args      []uint16   // indcies into heap
-	heap      []Term     // storage for subterms
+	Typ  TermType
+	Val  interface{}
+	Args []Term
 }
 
 // TermType identifies a type of term (atom, number, etc).
@@ -30,24 +28,14 @@ const (
 	List
 )
 
-// Type returns the type of the term.
-func (t *Term) Type() TermType {
-	return t.typ
-}
-
 // Atomic returns true if t is not a compound term.
 func (t *Term) Atomic() bool {
-	return len(t.args) == 0
+	return len(t.Args) == 0
 }
 
 // Atom returns true if t is an atom.
 func (t *Term) Atom() bool {
-	return t.typ == Structure && t.Atomic()
-}
-
-// Size returns the number of structures in t.
-func (t *Term) Size() int {
-	return len(t.heap) + 1
+	return t.Typ == Structure && t.Atomic()
 }
 
 // Parse reads a clause from r with respect to some operator table. Subterms are
@@ -60,7 +48,7 @@ func (t *Term) Parse(r io.Reader, ops OpTable, heap []Term) ([]Term, error) {
 	p := parser{
 		lexer: Lex(r),
 		ops:   ops,
-		heap:  t.heap[:0],
+		heap:  heap,
 		offs:  make(map[string]int),
 	}
 	p.next() // prime the buffer
@@ -68,15 +56,17 @@ func (t *Term) Parse(r io.Reader, ops OpTable, heap []Term) ([]Term, error) {
 
 	// ensure all subterms use the same storage heap
 	// (the heap may have been reallocated during parsing)
-	t.heap = p.heap
 	for i, sub := range p.heap {
 		off := p.offs[sub.String()]
-		end := off + len(sub.heap)
-		p.heap[i].heap = p.heap[off:end]
+		end := off + len(sub.Args)
+		p.heap[i].Args = p.heap[off:end]
 	}
+	off := p.offs[t.String()]
+	end := off + len(t.Args)
+	t.Args = p.heap[off:end]
 
 	if !ok {
-		return heap, t.val.(error)
+		return heap, t.Val.(error)
 	}
 
 	if p.buf.Typ != TerminalTok {
@@ -89,17 +79,17 @@ func (t *Term) Parse(r io.Reader, ops OpTable, heap []Term) ([]Term, error) {
 // String returns the canonical string form of t.
 func (t Term) String() string {
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprint(t.val))
-	if len(t.args) > 0 {
+	buf.WriteString(fmt.Sprint(t.Val))
+	if len(t.Args) > 0 {
 		var open bool
-		for _, j := range t.args {
+		for _, arg := range t.Args {
 			if !open {
 				buf.WriteRune('(')
 				open = true
 			} else {
 				buf.WriteRune(',')
 			}
-			buf.WriteString(t.heap[j].String())
+			buf.WriteString(arg.String())
 		}
 		buf.WriteRune(')')
 	}
@@ -175,14 +165,11 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 				fallthrough
 			case XFY:
 				p.next()
-				off := p.offs[lhs.String()]
 				if rhs, ok := p.readTerm(prec); ok {
-					n := len(p.heap)
-					t.args = t.bootstrap[:0]
-					t.val = f.Val.(string)
-					t.args = append(t.args, uint16(n-off), uint16(n+1-off))
+					off := len(p.heap)
+					t.Val = f.Val.(string)
 					p.heap = append(p.heap, lhs, rhs)
-					t.heap = p.heap[off:]
+					t.Args = p.heap[off:]
 					p.offs[t.String()] = off
 					return p.readOp(t, op.Prec, maxprec)
 				}
@@ -207,20 +194,20 @@ func (p *parser) read() (t Term, ok bool) {
 		return p.readFunctor(), true
 
 	case StringTok:
-		t.typ = String
-		t.val = tok.Val
+		t.Typ = String
+		t.Val = tok.Val
 		p.next()
 		return t, true
 
 	case NumTok:
-		t.typ = Number
-		t.val = tok.Val
+		t.Typ = Number
+		t.Val = tok.Val
 		p.next()
 		return t, true
 
 	case VarTok:
-		t.typ = Variable
-		t.val = tok.Val
+		t.Typ = Variable
+		t.Val = tok.Val
 		p.next()
 		return t, true
 
@@ -244,19 +231,17 @@ func (p *parser) read() (t Term, ok bool) {
 }
 
 func (p *parser) readFunctor() (t Term) {
-	t.args = t.bootstrap[:0]
-	t.typ = Structure
-	t.val = p.buf.Val
+	t.Typ = Structure
+	t.Val = p.buf.Val
 	tok := p.next()
 	switch tok.Typ {
 	case ParenTok:
 		if tok.Val.(rune) == '(' {
 			off := len(p.heap)
 			for _, arg := range p.readArgs() {
-				t.args = append(t.args, uint16(len(p.heap)))
 				p.heap = append(p.heap, arg)
 			}
-			t.heap = p.heap[off:]
+			t.Args = p.heap[off:]
 			p.offs[t.String()] = off
 		}
 	}
