@@ -370,14 +370,14 @@ func lexDot(l *lexer) lexState {
 }
 
 func lexNumber(l *lexer) lexState {
-	var num big.Rat
+	var num = new(big.Rat)
 	l.acceptRun("1234567890")
 	l.accept(".")
 	l.acceptRun("1234567890")
 	l.accept("e")
 	l.accept("+-")
 	l.acceptRun("1234567890")
-	_, err := fmt.Sscan(l.buf.String(), &num)
+	_, err := fmt.Sscan(l.buf.String(), num)
 	if err != nil {
 		panic(err)
 	}
