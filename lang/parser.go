@@ -195,9 +195,33 @@ func (p *parser) read() (t Term, ok bool) {
 }
 
 func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
+
+	if lhs.Atom() {
+		for op := range p.ops.Get(lhs.Val.(string)) {
+			if maxprec < op.Prec {
+				continue
+			}
+
+			prec := op.Prec
+			switch op.Typ {
+			case FX:
+				prec--
+				fallthrough
+			case FY:
+				if rhs, ok := p.readTerm(prec); ok {
+					off := len(p.heap)
+					p.heap = append(p.heap, rhs)
+					lhs.Args = p.heap[off:]
+					p.offs[lhs.String()] = off
+					return p.readOp(lhs, op.Prec, maxprec)
+				}
+			}
+		}
+	}
+
 	var t Term
 	f := p.skipSpace()
-
+	var consumed bool
 	if f.Typ == FunctTok {
 		for op := range p.ops.Get(f.Val.(string)) {
 			if maxprec < op.Prec {
@@ -214,22 +238,31 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 				continue
 			}
 
+			if !op.Typ.Prefix() && !consumed {
+				p.next()
+			}
+
 			prec := op.Prec
 			switch op.Typ {
+			case XF, YF:
+				off := len(p.heap)
+				p.heap = append(p.heap, lhs)
+				t.Args = p.heap[off:]
+				t.Val = f.Val.(string)
+				p.offs[t.String()] = off
+				return p.readOp(t, op.Prec, maxprec)
 			case XFX, YFX:
 				prec--
 				fallthrough
 			case XFY:
-				p.next()
 				if rhs, ok := p.readTerm(prec); ok {
 					off := len(p.heap)
-					t.Val = f.Val.(string)
 					p.heap = append(p.heap, lhs, rhs)
 					t.Args = p.heap[off:]
+					t.Val = f.Val.(string)
 					p.offs[t.String()] = off
 					return p.readOp(t, op.Prec, maxprec)
 				}
-				p.reportf("operator priority clash")
 			}
 		}
 	}
