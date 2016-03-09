@@ -244,8 +244,9 @@ func (p *parser) readFunctor() (t Term) {
 	switch tok.Typ {
 	case ParenTok:
 		if tok.Val.(rune) == '(' {
+			args := p.readArgs()
 			off := len(p.heap)
-			for _, arg := range p.readArgs() {
+			for _, arg := range args {
 				p.heap = append(p.heap, arg)
 			}
 			t.Args = p.heap[off:]
@@ -259,7 +260,7 @@ func (p *parser) readArgs() (args []Term) {
 	args = p.args[:0]
 	for {
 		p.next()
-		arg, ok := p.readTerm(1000)
+		arg, ok := p.readTerm(999)
 		if ok {
 			args = append(args, arg)
 		}
