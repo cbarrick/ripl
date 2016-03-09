@@ -9,6 +9,9 @@ import (
 // API
 // --------------------------------------------------
 
+// A Clause is a single term stored contiguously in bottom-up order.
+type Clause []Term
+
 // A Term is a Prolog term. A term is a syntax tree of functors and arguments.
 type Term struct {
 	Typ  TermType
@@ -29,51 +32,13 @@ const (
 )
 
 // Atomic returns true if t is not a compound term.
-func (t *Term) Atomic() bool {
+func (t Term) Atomic() bool {
 	return len(t.Args) == 0
 }
 
 // Atom returns true if t is an atom.
-func (t *Term) Atom() bool {
+func (t Term) Atom() bool {
 	return t.Typ == Structure && t.Atomic()
-}
-
-// Parse reads a clause from r with respect to some operator table. Subterms are
-// appended onto heap in bottom-up level-order, and a new slice is returned if
-// the heap is reallocated.
-func (t *Term) Parse(r io.Reader, ops OpTable, heap []Term) ([]Term, error) {
-	var ok bool
-
-	// parse the term
-	p := parser{
-		lexer: Lex(r),
-		ops:   ops,
-		heap:  heap,
-		offs:  make(map[string]int),
-	}
-	p.next() // prime the buffer
-	*t, ok = p.readTerm(1200)
-
-	// ensure all subterms use the same storage heap
-	// (the heap may have been reallocated during parsing)
-	for i, sub := range p.heap {
-		off := p.offs[sub.String()]
-		end := off + len(sub.Args)
-		p.heap[i].Args = p.heap[off:end]
-	}
-	off := p.offs[t.String()]
-	end := off + len(t.Args)
-	t.Args = p.heap[off:end]
-
-	if !ok {
-		return heap, t.Val.(error)
-	}
-
-	if p.buf.Typ != TerminalTok {
-		return heap, fmt.Errorf("operator priority clash")
-	}
-
-	return p.heap, nil
 }
 
 // String returns the canonical string form of t.
@@ -94,6 +59,49 @@ func (t Term) String() string {
 		buf.WriteRune(')')
 	}
 	return buf.String()
+}
+
+// Root returns the root term of the clause.
+func (c Clause) Root() Term {
+	return c[len(c)-1]
+}
+
+// Parse reads a clause from r with respect to some operator table. Subterms are
+// appended onto heap in bottom-up level-order, and a new slice is returned if
+// the heap is reallocated.
+func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, error) {
+	// parse the term
+	var start = len(heap)
+	p := parser{
+		lexer: Lex(r),
+		ops:   ops,
+		heap:  heap,
+		offs:  make(map[string]int, 16), // TODO: give this a default size
+	}
+	p.next() // prime the buffer
+	t, ok := p.readTerm(1200)
+	h := append(p.heap, t)
+	c := Clause(h[start:])
+
+	// ensure all subterms use the same storage
+	// (the heap may have been reallocated during parsing)
+	if len(heap) != 0 && &h[0] != &heap[0] {
+		for i, sub := range c {
+			off := p.offs[sub.String()]
+			end := off + len(sub.Args)
+			c[i].Args = h[off:end]
+		}
+	}
+
+	if !ok {
+		return nil, nil, t.Val.(error)
+	}
+
+	if p.buf.Typ != TerminalTok {
+		return nil, nil, fmt.Errorf("operator priority clash")
+	}
+
+	return c, h, nil
 }
 
 // Parser Infrastructure
@@ -136,49 +144,6 @@ func (p *parser) readTerm(maxprec uint) (t Term, ok bool) {
 	}
 	t = p.readOp(t, 0, maxprec)
 	return t, true
-}
-
-func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
-	var t Term
-	f := p.skipSpace()
-
-	if f.Typ == FunctTok {
-		for op := range p.ops.Get(f.Val.(string)) {
-			if maxprec < op.Prec {
-				continue
-			} else if op.Typ == XF || op.Typ == XFX || op.Typ == XFY {
-				if op.Prec <= lhsprec {
-					continue
-				}
-			} else if op.Typ == YF || op.Typ == YFX {
-				if op.Prec < lhsprec {
-					continue
-				}
-			} else {
-				continue
-			}
-
-			prec := op.Prec
-			switch op.Typ {
-			case XFX, YFX:
-				prec--
-				fallthrough
-			case XFY:
-				p.next()
-				if rhs, ok := p.readTerm(prec); ok {
-					off := len(p.heap)
-					t.Val = f.Val.(string)
-					p.heap = append(p.heap, lhs, rhs)
-					t.Args = p.heap[off:]
-					p.offs[t.String()] = off
-					return p.readOp(t, op.Prec, maxprec)
-				}
-				p.reportf("operator priority clash")
-			}
-		}
-	}
-
-	return lhs
 }
 
 func (p *parser) read() (t Term, ok bool) {
@@ -228,6 +193,49 @@ func (p *parser) read() (t Term, ok bool) {
 		p.reportf("cannont parse %v, not implemented", tok)
 		return t, false
 	}
+}
+
+func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
+	var t Term
+	f := p.skipSpace()
+
+	if f.Typ == FunctTok {
+		for op := range p.ops.Get(f.Val.(string)) {
+			if maxprec < op.Prec {
+				continue
+			} else if op.Typ == XF || op.Typ == XFX || op.Typ == XFY {
+				if op.Prec <= lhsprec {
+					continue
+				}
+			} else if op.Typ == YF || op.Typ == YFX {
+				if op.Prec < lhsprec {
+					continue
+				}
+			} else {
+				continue
+			}
+
+			prec := op.Prec
+			switch op.Typ {
+			case XFX, YFX:
+				prec--
+				fallthrough
+			case XFY:
+				p.next()
+				if rhs, ok := p.readTerm(prec); ok {
+					off := len(p.heap)
+					t.Val = f.Val.(string)
+					p.heap = append(p.heap, lhs, rhs)
+					t.Args = p.heap[off:]
+					p.offs[t.String()] = off
+					return p.readOp(t, op.Prec, maxprec)
+				}
+				p.reportf("operator priority clash")
+			}
+		}
+	}
+
+	return lhs
 }
 
 func (p *parser) readFunctor() (t Term) {
