@@ -69,7 +69,7 @@ func (t Term) String() string {
 // Parse reads a clause from r with respect to some operator table. Subterms are
 // appended onto the heap in bottom-up level-order. The new heap slice is
 // returned, and the backing array may be reallocated.
-func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, error) {
+func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, []error) {
 	// parse the term
 	var start = len(heap)
 	p := parser{
@@ -79,7 +79,7 @@ func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, error) {
 		offs:  make(map[string]int, 16), // TODO: give this a default size
 	}
 	p.next() // prime the buffer
-	t, ok := p.readTerm(1200)
+	t, _ := p.readTerm(1200)
 	h := append(p.heap, t)
 	c := Clause(h[start:])
 
@@ -93,18 +93,18 @@ func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, error) {
 		}
 	}
 
-	if !ok {
-		return nil, nil, t.Val.(error)
+	if p.buf.Typ != TerminalTok {
+		p.reportf("operator priority clash")
 	}
 
-	if p.buf.Typ != TerminalTok {
-		return nil, nil, fmt.Errorf("operator priority clash")
+	if len(p.errs) != 0 {
+		return nil, nil, p.errs
 	}
 
 	return c, h, nil
 }
 
-// Parser Infrastructure
+// Parser
 // --------------------------------------------------
 
 type parser struct {
@@ -114,6 +114,7 @@ type parser struct {
 	offs  map[string]int // offsets of term heaps, keyed by canonical string
 	buf   Lexeme         // the most recently read token
 	args  [16]Term       // scratch space for parsing argument lists
+	errs  []error
 }
 
 func (p *parser) next() (tok Lexeme) {
@@ -131,12 +132,10 @@ func (p *parser) skipSpace() (tok Lexeme) {
 }
 
 func (p *parser) reportf(format string, args ...interface{}) {
-	// TODO: better error handling
-	panic(fmt.Errorf(format, args...))
+	msg := fmt.Sprintf(format, args...)
+	err := fmt.Errorf("%d:%d: %s", p.buf.Line+1, p.buf.Col, msg)
+	p.errs = append(p.errs, err)
 }
-
-// Prolog Parser
-// --------------------------------------------------
 
 func (p *parser) readTerm(maxprec uint) (t Term, ok bool) {
 	if t, ok = p.read(); !ok {
