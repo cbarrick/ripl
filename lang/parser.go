@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+
+	"github.com/cbarrick/ripl/lang/value"
 )
 
 // API
@@ -14,22 +16,9 @@ type Clause []Term
 
 // A Term is a Prolog term. A term is a syntax tree of functors and arguments.
 type Term struct {
-	Typ  TermType
-	Val  interface{}
+	value.Name
 	Args []Term
 }
-
-// TermType identifies a type of term (atom, number, etc).
-type TermType int
-
-// Types of term.
-const (
-	Structure TermType = iota
-	Variable
-	String
-	Number
-	List
-)
 
 // Root returns the root term of the clause.
 func (c Clause) Root() Term {
@@ -43,13 +32,13 @@ func (t Term) Atomic() bool {
 
 // Atom returns true if t is an atom.
 func (t Term) Atom() bool {
-	return t.Typ == Structure && t.Atomic()
+	return t.Typ == value.FunctorTyp && t.Atomic()
 }
 
 // String returns the canonical form of t.
 func (t Term) String() string {
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprint(t.Val))
+	buf.WriteString(t.Value().String())
 	if len(t.Args) > 0 {
 		var open bool
 		for _, arg := range t.Args {
@@ -69,7 +58,7 @@ func (t Term) String() string {
 // Parse reads a clause from r with respect to some operator table. Subterms are
 // appended onto the heap in bottom-up level-order. The new heap slice is
 // returned, and the backing array may be reallocated.
-func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, []error) {
+func Parse(r io.Reader, heap []Term, ops OpTable, ns *value.Namespace) (Clause, []Term, []error) {
 	// parse the term
 	var start = len(heap)
 	p := parser{
@@ -77,6 +66,7 @@ func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, []error) {
 		ops:   ops,
 		heap:  heap,
 		offs:  make(map[string]int, 16), // TODO: give this a default size
+		ns:    ns,
 	}
 	p.next() // prime the buffer
 	t, _ := p.readTerm(1200)
@@ -110,10 +100,11 @@ func Parse(r io.Reader, heap []Term, ops OpTable) (Clause, []Term, []error) {
 type parser struct {
 	lexer <-chan Lexeme
 	ops   OpTable
-	heap  []Term         // global storage for all term heaps
-	offs  map[string]int // offsets of term heaps, keyed by canonical string
-	buf   Lexeme         // the most recently read token
-	args  [16]Term       // scratch space for parsing argument lists
+	heap  []Term           // global storage for all terms
+	offs  map[string]int   // offsets of terms, keyed by canonical string
+	ns    *value.Namespace // all terms of a clause share the same namespace
+	buf   Lexeme           // the most recently read token
+	args  [16]Term         // scratch space for parsing argument lists
 	errs  []error
 }
 
@@ -151,39 +142,31 @@ func (p *parser) read() (t Term, ok bool) {
 
 	switch tok.Typ {
 	case LexErr:
-		p.reportf(tok.Val.(error).Error())
+		p.reportf(tok.Val.String())
 		return t, false
 
 	case FunctTok:
 		return p.readFunctor(), true
 
 	case StringTok:
-		t.Typ = String
-		t.Val = tok.Val
+		t.Name = p.ns.Name(tok.Val)
 		p.next()
 		return t, true
 
 	case NumTok:
-		t.Typ = Number
-		t.Val = tok.Val
+		t.Name = p.ns.Name(tok.Val)
 		p.next()
 		return t, true
 
 	case VarTok:
-		t.Typ = Variable
-		t.Val = tok.Val
+		t.Name = p.ns.Name(tok.Val)
 		p.next()
 		return t, true
 
-	case ParenTok:
-		switch tok.Val.(rune) {
-		case '(':
-			return p.readGroup(), true
-		case '[':
-			return p.readList(), true
-		default:
-			return t, false
-		}
+	case ParenOpen:
+		return p.readGroup(), true
+	case BracketOpen:
+		return p.readList(), true
 
 	case TerminalTok:
 		return t, false
@@ -197,7 +180,7 @@ func (p *parser) read() (t Term, ok bool) {
 func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 
 	if lhs.Atom() {
-		for op := range p.ops.Get(lhs.Val.(string)) {
+		for op := range p.ops.Get(lhs.Value().String()) {
 			if maxprec < op.Prec {
 				continue
 			}
@@ -223,7 +206,7 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 	f := p.skipSpace()
 	var consumed bool
 	if f.Typ == FunctTok {
-		for op := range p.ops.Get(f.Val.(string)) {
+		for op := range p.ops.Get(f.Val.String()) {
 			if maxprec < op.Prec {
 				continue
 			} else if op.Typ == XF || op.Typ == XFX || op.Typ == XFY {
@@ -247,8 +230,10 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 			case XF, YF:
 				off := len(p.heap)
 				p.heap = append(p.heap, lhs)
-				t.Args = p.heap[off:]
-				t.Val = f.Val.(string)
+				t = Term{
+					Args: p.heap[off:],
+					Name: p.ns.Name(f.Val),
+				}
 				p.offs[t.String()] = off
 				return p.readOp(t, op.Prec, maxprec)
 			case XFX, YFX:
@@ -258,8 +243,10 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 				if rhs, ok := p.readTerm(prec); ok {
 					off := len(p.heap)
 					p.heap = append(p.heap, lhs, rhs)
-					t.Args = p.heap[off:]
-					t.Val = f.Val.(string)
+					t = Term{
+						Args: p.heap[off:],
+						Name: p.ns.Name(f.Val),
+					}
 					p.offs[t.String()] = off
 					return p.readOp(t, op.Prec, maxprec)
 				}
@@ -271,20 +258,16 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 }
 
 func (p *parser) readFunctor() (t Term) {
-	t.Typ = Structure
-	t.Val = p.buf.Val
+	t.Name = p.ns.Name(p.buf.Val)
 	tok := p.next()
-	switch tok.Typ {
-	case ParenTok:
-		if tok.Val.(rune) == '(' {
-			args := p.readArgs()
-			off := len(p.heap)
-			for _, arg := range args {
-				p.heap = append(p.heap, arg)
-			}
-			t.Args = p.heap[off:]
-			p.offs[t.String()] = off
+	if tok.Typ == ParenOpen {
+		args := p.readArgs()
+		off := len(p.heap)
+		for _, arg := range args {
+			p.heap = append(p.heap, arg)
 		}
+		t.Args = p.heap[off:]
+		p.offs[t.String()] = off
 	}
 	return t
 }
@@ -298,9 +281,9 @@ func (p *parser) readArgs() (args []Term) {
 			args = append(args, arg)
 		}
 		switch {
-		case p.buf.Typ == FunctTok && p.buf.Val.(string) == ",":
+		case p.buf.Typ == FunctTok && p.buf.Val.String() == ",":
 			continue
-		case p.buf.Typ == ParenTok && p.buf.Val.(rune) == ')':
+		case p.buf.Typ == ParenClose:
 			p.next()
 			return args
 		default:
@@ -312,7 +295,7 @@ func (p *parser) readArgs() (args []Term) {
 func (p *parser) readGroup() (t Term) {
 	p.next() // consume open paren
 	t, _ = p.readTerm(1200)
-	if p.buf.Typ != ParenTok || p.buf.Val.(rune) != ')' {
+	if p.buf.Typ != ParenClose {
 		p.reportf("expected ')', found %v", p.buf)
 	} else {
 		p.next() // consume close paren

@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"math/big"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cbarrick/ripl/lang/value"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -30,7 +30,7 @@ var UnicodeSymbols = []*unicode.RangeTable{
 	unicode.Po, // punctuation, other (contains '!', and ',')
 }
 
-// ErrInvalidEnc is the error returned when lexing invalid UTF-8.
+// ErrInvalidEnc is the error returned when the input cannot be lexed.
 var ErrInvalidEnc = fmt.Errorf("invalid encoding")
 
 // API
@@ -39,27 +39,31 @@ var ErrInvalidEnc = fmt.Errorf("invalid encoding")
 // A Lexeme is a lexical item of Prolog.
 type Lexeme struct {
 	Typ  LexType
-	Val  interface{}
-	Line uint // zero-based line for the start of this token
-	Col  uint // zero-based column for the start of this token
+	Val  value.Value
+	Line int // zero-based line for the start of this token
+	Col  int // zero-based column for the start of this token
 }
 
 // A LexType classifies types of lexeme.
 type LexType int
 
 // The types of lexeme.
-// The Go type of a lexeme's value can be infered from its LexType.
 const (
 	LexErr LexType = iota // error
 
-	SpaceTok    // string
-	CommentTok  // string
-	FunctTok    // string
-	StringTok   // string
-	NumTok      // math/big.Rat
-	VarTok      // uint, 0 indicates the "_" placeholder
-	ParenTok    // rune, includes parens, brackets, and braces
-	TerminalTok // rune
+	SpaceTok
+	CommentTok
+	FunctTok
+	StringTok
+	NumTok
+	VarTok
+	ParenOpen
+	ParenClose
+	BracketOpen
+	BracketClose
+	BraceOpen
+	BraceClose
+	TerminalTok
 )
 
 // Lex returns all of the tokens of the next clause.
@@ -70,44 +74,57 @@ func Lex(r io.Reader) <-chan Lexeme {
 }
 
 func (tok *Lexeme) String() string {
-	var format string
-	switch tok.Typ {
-	case LexErr:
+	if tok.Typ == LexErr {
 		if tok.Val == nil {
 			return "no more tokens"
 		}
 		return tok.Val.(error).Error()
-	case SpaceTok, CommentTok, FunctTok, StringTok:
-		format = "%q (%v)"
-	case NumTok:
-		format = "%v (%v)"
-	case VarTok:
-		format = "_%d (%v)"
-	case ParenTok, TerminalTok:
-		format = "%q (%v)"
+	}
+	var val string
+	switch tok.Typ {
+	case LexErr, FunctTok, StringTok, NumTok, VarTok:
+		val = tok.Val.String()
+	case SpaceTok:
+		val = " "
+	case CommentTok:
+		val = "//"
+	case ParenOpen:
+		val = "("
+	case ParenClose:
+		val = ")"
+	case BracketOpen:
+		val = "["
+	case BracketClose:
+		val = "]"
+	case BraceOpen:
+		val = "{"
+	case BraceClose:
+		val = "}"
+	case TerminalTok:
+		val = "."
 	default:
 		panic("unknown lexeme type")
 	}
-	return fmt.Sprintf(format, tok.Val, tok.Typ)
+	return fmt.Sprintf("%q (%v)", val, tok.Typ)
 }
 
 func (typ LexType) String() string {
 	switch typ {
 	case LexErr:
-		return "LexErr"
+		return "Lex Error"
 	case SpaceTok:
-		return "Space"
+		return "Whitespace"
 	case CommentTok:
 		return "Comment"
 	case FunctTok:
-		return "Funct"
+		return "Functor"
 	case StringTok:
 		return "String"
 	case NumTok:
-		return "Num"
+		return "Number"
 	case VarTok:
-		return "Var"
-	case ParenTok:
+		return "Variable"
+	case ParenOpen, ParenClose:
 		return "Paren"
 	case TerminalTok:
 		return "Terminal"
@@ -123,13 +140,13 @@ func (typ LexType) String() string {
 type lexer struct {
 	r       io.Reader
 	ret     chan<- Lexeme     // channel to return lexemes
-	vars    map[string]uint   // maintains ids for variables
+	vars    map[string]int    // maintains ids for variables
 	buf     bytes.Buffer      // buffer for current token
 	runeBuf [utf8.UTFMax]byte // scratch space for decoding runes
 	cur     rune              // current rune, not yet in buf
-	depth   uint              // number of unclosed parens etc.
-	line    uint              // zero-based line position of buf
-	col     uint              // zero-based column position of buf
+	depth   int               // number of unclosed parens etc.
+	line    int               // zero-based line position of buf
+	col     int               // zero-based column position of buf
 	eof     bool
 }
 
@@ -147,17 +164,21 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 	l := lexer{
 		r:    Norm.Reader(r),
 		ret:  ret,
-		vars: make(map[string]uint),
+		vars: make(map[string]int),
 	}
 
 	// At any point, the state machine may exit by panicing.
 	// If so, a LexErr is emitted before closing.
 	defer func() {
 		err := recover()
-		if err == io.EOF {
-			l.emit(TerminalTok, '.')
-		} else if err != nil {
-			l.emit(LexErr, err.(error))
+		if err, ok := err.(error); ok {
+			val := value.Error{err}
+			if err != nil {
+				ret <- Lexeme{
+					Typ: LexErr,
+					Val: val,
+				}
+			}
 		}
 		close(ret)
 	}()
@@ -205,6 +226,7 @@ func (l *lexer) read() (r rune) {
 		}
 	} else {
 		l.cur = eof
+		r = eof
 	}
 	return r
 }
@@ -222,16 +244,16 @@ func (l *lexer) readTo(delim rune) {
 // is consumed.
 //
 // It will never consume the '!' cut symbol or the ',' comma.
-func (l *lexer) accept(chars string, ranges ...*unicode.RangeTable) (ok bool) {
+func (l *lexer) accept(chars string, ranges ...*unicode.RangeTable) (rune, bool) {
 	var r = l.cur
 	if r == '!' || r == ',' {
-		return false
+		return l.cur, false
 	}
 	if strings.ContainsRune(chars, r) || unicode.In(r, ranges...) {
 		l.read()
-		return true
+		return l.cur, true
 	}
-	return false
+	return l.cur, false
 }
 
 // acceptRun consumes as consecutive runes that are one of the given characters
@@ -239,33 +261,39 @@ func (l *lexer) accept(chars string, ranges ...*unicode.RangeTable) (ok bool) {
 // character is consumed.
 //
 // It will never consume the '!' cut symbol or the ',' comma.
-func (l *lexer) acceptRun(chars string, ranges ...*unicode.RangeTable) (ok bool) {
-	for l.accept(chars, ranges...) {
-		ok = true
+func (l *lexer) acceptRun(chars string, ranges ...*unicode.RangeTable) (r rune, ok bool) {
+	if r, ok = l.accept(chars, ranges...); !ok {
+		return r, false
 	}
-	return ok
+	for ok {
+		r, ok = l.accept(chars, ranges...)
+	}
+	return r, true
 }
 
 // Emit sends a lexeme to the user of the given type and value
 // and flushes the buffer.
-func (l *lexer) emit(typ LexType, val interface{}) {
-	l.ret <- Lexeme{typ, val, l.line, l.col}
-	for i := l.buf.Len(); 0 < i; {
-		r, size, err := l.buf.ReadRune()
-		if err != nil {
-			panic(err)
-		}
+func (l *lexer) emit(typ LexType, val value.Value) {
+	var dl, dc int // change in line/column over this token
+	for r := range l.buf.String() {
 		switch r {
 		case '\r':
-			l.col = 0
+			dc = -l.col
 		case '\n':
-			l.line++
-			l.col = 0
+			dl++
+			dc = -l.col
 		default:
-			l.col++
+			dc++
 		}
-		i -= size
 	}
+
+	if val != nil {
+		fmt.Fscan(&l.buf, val)
+	}
+	l.ret <- Lexeme{typ, val, l.line, l.col}
+
+	l.line += dl
+	l.col += dc
 	l.buf.Reset()
 }
 
@@ -283,24 +311,25 @@ func lexAny(l *lexer) lexState {
 	// whitespace and comments
 	case unicode.IsSpace(r):
 		l.acceptRun(" \t\r\n", unicode.Space)
-		l.emit(SpaceTok, l.buf.String())
+		l.emit(SpaceTok, nil)
 		return lexAny
 	case r == '%':
 		l.readTo('\n')
-		l.emit(CommentTok, l.buf.String())
+		l.emit(CommentTok, nil)
 		return lexAny
 
 	// cuts, commas, and dots are special cases
 	case r == '!':
 		l.read()
-		l.emit(FunctTok, "!")
+		l.emit(FunctTok, new(value.Functor))
 		return lexAny
 	case r == ',':
 		l.read()
-		l.emit(FunctTok, ",")
+		l.emit(FunctTok, new(value.Functor))
 		return lexAny
 	case r == '.':
-		return lexDot
+		l.read()
+		return emitDot
 
 	// parens, brackets, and braces
 	case strings.ContainsRune("([{}])", r):
@@ -336,33 +365,46 @@ func lexAny(l *lexer) lexState {
 
 	// auto-insert terminal at eof
 	case r == eof:
-		l.emit(TerminalTok, eof)
+		l.emit(TerminalTok, nil)
 		return nil
 
 	// all other runes are unacceptable
 	default:
-		panic(fmt.Errorf("unacceptable character %U", r))
+		panic(ErrInvalidEnc)
 	}
 }
 
 func lexParen(l *lexer) lexState {
 	r := l.cur
 	l.read()
-	if strings.ContainsRune("([{", r) {
+	switch r {
+	case '(':
 		l.depth++
-	} else {
+		l.emit(ParenOpen, nil)
+	case ')':
 		l.depth--
+		l.emit(ParenClose, nil)
+	case '[':
+		l.depth++
+		l.emit(BracketOpen, nil)
+	case ']':
+		l.depth--
+		l.emit(BracketClose, nil)
+	case '{':
+		l.depth++
+		l.emit(BraceOpen, nil)
+	case '}':
+		l.depth--
+		l.emit(BraceClose, nil)
 	}
-	l.emit(ParenTok, r)
 	return lexAny
 }
 
-func lexDot(l *lexer) lexState {
-	l.read()
+func emitDot(l *lexer) lexState {
 	if l.depth == 0 {
 		r := l.cur
 		if r == eof || unicode.IsSpace(r) {
-			l.emit(TerminalTok, '.')
+			l.emit(TerminalTok, nil)
 			return nil
 		}
 	}
@@ -370,47 +412,41 @@ func lexDot(l *lexer) lexState {
 }
 
 func lexNumber(l *lexer) lexState {
-	var num = new(big.Rat)
 	l.acceptRun("1234567890")
-	l.accept(".")
-	l.acceptRun("1234567890")
+	_, a := l.accept(".")
+	_, b := l.acceptRun("1234567890")
+	if a && !b {
+		l.emit(NumTok, new(value.Number))
+		l.buf.WriteByte('.')
+		return emitDot
+	}
 	l.accept("e")
 	l.accept("+-")
 	l.acceptRun("1234567890")
-	_, err := fmt.Sscan(l.buf.String(), num)
-	if err != nil {
-		panic(err)
-	}
-	l.emit(NumTok, num)
+	l.emit(NumTok, new(value.Number))
 	return lexAny
 }
 
 func lexVar(l *lexer) lexState {
 	l.acceptRun("_", unicode.Letter)
-	name := l.buf.String()
-	id := l.vars[name]
-	if name != "_" && id == 0 {
-		id = uint(len(l.vars) + 1)
-		l.vars[name] = id
-	}
-	l.emit(VarTok, id)
+	l.emit(VarTok, new(value.Variable))
 	return lexAny
 }
 
 func lexLetters(l *lexer) lexState {
 	l.acceptRun("_", unicode.Letter)
-	l.emit(FunctTok, l.buf.String())
+	l.emit(FunctTok, new(value.Functor))
 	return lexAny
 }
 
 func lexSymbols(l *lexer) lexState {
 	l.acceptRun(ASCIISymbols, UnicodeSymbols...)
-	l.emit(FunctTok, l.buf.String())
+	l.emit(FunctTok, new(value.Functor))
 	return lexAny
 }
 
 func lexQuote(l *lexer) lexState {
-	var quote = l.read()
+	var quote = l.cur
 	var typ LexType
 	switch quote {
 	case '\'':
@@ -418,17 +454,14 @@ func lexQuote(l *lexer) lexState {
 	case '"':
 		typ = StringTok
 	}
-	var r rune
+	var r = l.read()
 	for r != quote {
 		r = l.read()
 		if r == '\\' {
 			r = l.read()
 		}
 	}
-	val, err := strconv.Unquote(l.buf.String())
-	if err != nil {
-		panic(err)
-	}
-	l.emit(typ, val)
+	l.read()
+	l.emit(typ, new(value.Functor))
 	return lexAny
 }

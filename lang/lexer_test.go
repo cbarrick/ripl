@@ -13,20 +13,20 @@ func ExampleLex() {
 		fmt.Println(&l)
 	}
 	// Output:
-	// "a" (Funct)
-	// " " (Space)
-	// "+" (Funct)
-	// " " (Space)
-	// "b" (Funct)
-	// " " (Space)
-	// "*" (Funct)
-	// " " (Space)
-	// "c" (Funct)
-	// " " (Space)
-	// "-" (Funct)
-	// " " (Space)
-	// "d" (Funct)
-	// '.' (Terminal)
+	// 	"a" (Functor)
+	// " " (Whitespace)
+	// "+" (Functor)
+	// " " (Whitespace)
+	// "b" (Functor)
+	// " " (Whitespace)
+	// "*" (Functor)
+	// " " (Whitespace)
+	// "c" (Functor)
+	// " " (Whitespace)
+	// "-" (Functor)
+	// " " (Whitespace)
+	// "d" (Functor)
+	// "." (Terminal)
 }
 
 func ExampleLex_eof() {
@@ -36,9 +36,9 @@ func ExampleLex_eof() {
 		fmt.Println(&l)
 	}
 	// Output:
-	// "foo" (Funct)
-	// '(' (Paren)
-	// "bar" (Funct)
-	// ')' (Paren)
-	// '\x03' (Terminal)
+	// "foo" (Functor)
+	// "(" (Paren)
+	// "bar" (Functor)
+	// ")" (Paren)
+	// "." (Terminal)
 }
