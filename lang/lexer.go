@@ -1,20 +1,17 @@
 package lang
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/cbarrick/ripl/lang/value"
 
 	"golang.org/x/text/unicode/norm"
 )
-
-// eof is used as a sentinal value for the state-machine.
-const eof = '\x03'
 
 // Norm is the form to which unicode input is normalized.
 const Norm = norm.NFD
@@ -138,16 +135,14 @@ func (typ LexType) String() string {
 
 // A lexer contains the global state for the lexer state-machine.
 type lexer struct {
-	r       io.Reader
-	ret     chan<- Lexeme     // channel to return lexemes
-	vars    map[string]int    // maintains ids for variables
-	buf     bytes.Buffer      // buffer for current token
-	runeBuf [utf8.UTFMax]byte // scratch space for decoding runes
-	cur     rune              // current rune, not yet in buf
-	depth   int               // number of unclosed parens etc.
-	line    int               // zero-based line position of buf
-	col     int               // zero-based column position of buf
-	eof     bool
+	rd    *bufio.Reader
+	ret   chan<- Lexeme // channel to return lexemes
+	buf   *bytes.Buffer // buffer for current token
+	cur   rune          // current rune, not yet in buf
+	depth int           // number of unclosed parens etc.
+	line  int           // zero-based line position of buf
+	col   int           // zero-based column position of buf
+	eof   bool
 }
 
 // lexStates encode the lexer state-machine. lexStates are functions that
@@ -161,10 +156,12 @@ type lexState func(*lexer) lexState
 // lex is the entry point of the lexing goroutine.
 // It drives the state machine.
 func lex(r io.Reader, ret chan<- Lexeme) {
+	rd := bufio.NewReaderSize(Norm.Reader(r), 4)
+	buf := new(bytes.Buffer)
 	l := lexer{
-		r:    Norm.Reader(r),
-		ret:  ret,
-		vars: make(map[string]int),
+		rd:  rd,
+		ret: ret,
+		buf: buf,
 	}
 
 	// At any point, the state machine may exit by panicing.
@@ -194,40 +191,26 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 }
 
 // read consumes the next rune in the stream. The rune is added to the buffer.
-func (l *lexer) read() (r rune) {
-	if l.cur != 0 && l.cur != eof {
+func (l *lexer) read() rune {
+	if l.cur != 0 {
 		l.buf.WriteRune(l.cur)
 	}
 
 	if l.eof {
-		l.cur = eof
-		return
+		l.cur = 0
+		return 0
 	}
 
-	var i int
-	for !utf8.FullRune(l.runeBuf[:i]) {
-		n, err := l.r.Read(l.runeBuf[i : i+1])
-		i += n
-		if err == io.EOF {
-			l.eof = true
-		} else if err != nil {
-			panic(err)
-		}
-		if n == 0 {
-			break
-		}
+	r, _, err := l.rd.ReadRune()
+	if err == io.EOF {
+		l.eof = true
+	} else if err != nil {
+		panic(err)
 	}
-	if i > 0 {
-		if utf8.Valid(l.runeBuf[:i]) {
-			r, _ = utf8.DecodeRune(l.runeBuf[:i])
-			l.cur = r
-		} else {
-			panic(ErrInvalidEnc)
-		}
-	} else {
-		l.cur = eof
-		r = eof
+	if r == '\uFFFD' {
+		panic(ErrInvalidEnc)
 	}
+	l.cur = r
 	return r
 }
 
@@ -288,7 +271,7 @@ func (l *lexer) emit(typ LexType, val value.Value) {
 	}
 
 	if val != nil {
-		fmt.Fscan(&l.buf, val)
+		fmt.Fscan(l.buf, val)
 	}
 	l.ret <- Lexeme{typ, val, l.line, l.col}
 
@@ -364,7 +347,7 @@ func lexAny(l *lexer) lexState {
 		return lexSymbols
 
 	// auto-insert terminal at eof
-	case r == eof:
+	case r == 0:
 		l.emit(TerminalTok, nil)
 		return nil
 
@@ -403,7 +386,7 @@ func lexParen(l *lexer) lexState {
 func emitDot(l *lexer) lexState {
 	if l.depth == 0 {
 		r := l.cur
-		if r == eof || unicode.IsSpace(r) {
+		if r == 0 || unicode.IsSpace(r) {
 			l.emit(TerminalTok, nil)
 			return nil
 		}

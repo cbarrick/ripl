@@ -3,12 +3,21 @@ package lang_test
 import (
 	"fmt"
 	"strings"
+	"testing"
 
 	"github.com/cbarrick/ripl/lang"
 )
 
+func BenchmarkLex(b *testing.B) {
+	const input = "a + foo(bar,Baz) * 3.14e30 - d."
+	for i := 0; i < b.N; i++ {
+		for _ = range lang.Lex(strings.NewReader(input)) {
+		}
+	}
+}
+
 func ExampleLex() {
-	var input = "a + b * c - d."
+	const input = "a + b * c - d."
 	for l := range lang.Lex(strings.NewReader(input)) {
 		fmt.Println(&l)
 	}
@@ -31,7 +40,7 @@ func ExampleLex() {
 
 func ExampleLex_eof() {
 	// Terminal Lexemes are inserted at EOF
-	var input = "foo(bar)"
+	const input = "foo(bar)"
 	for l := range lang.Lex(strings.NewReader(input)) {
 		fmt.Println(&l)
 	}
