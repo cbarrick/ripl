@@ -16,7 +16,7 @@ type Clause []Term
 
 // A Term is a Prolog term. A term is a syntax tree of functors and arguments.
 type Term struct {
-	value.Name
+	Name value.Name
 	Args []Term
 }
 
@@ -32,13 +32,13 @@ func (t Term) Atomic() bool {
 
 // Atom returns true if t is an atom.
 func (t Term) Atom() bool {
-	return t.Typ == value.FunctorTyp && t.Atomic()
+	return t.Name.Typ == value.FunctorTyp && t.Atomic()
 }
 
 // String returns the canonical form of t.
 func (t Term) String() string {
 	var buf bytes.Buffer
-	buf.WriteString(t.Value().String())
+	buf.WriteString(t.Name.String())
 	if len(t.Args) > 0 {
 		var open bool
 		for _, arg := range t.Args {
@@ -180,7 +180,7 @@ func (p *parser) read() (t Term, ok bool) {
 func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 
 	if lhs.Atom() {
-		for op := range p.ops.Get(lhs.Value().String()) {
+		for op := range p.ops.Get(lhs.Name.String()) {
 			if maxprec < op.Prec {
 				continue
 			}
