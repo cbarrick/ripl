@@ -45,8 +45,7 @@ type LexType int
 
 // The types of lexeme.
 const (
-	LexErr LexType = iota // error
-
+	LexErr LexType = iota
 	SpaceTok
 	CommentTok
 	FunctTok

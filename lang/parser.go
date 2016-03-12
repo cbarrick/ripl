@@ -53,9 +53,10 @@ func (t Term) String() string {
 	return buf.String()
 }
 
-// Parse reads a clause from r with respect to some operator table. Subterms are
-// appended onto the heap in bottom-up level-order. The new heap slice is
-// returned, and the backing array may be reallocated.
+// Parse reads a clause from r with respect to some operator table.
+// Syntactically, a clause is a Prolog term followed by a period.
+// The clause is built in bottom-up order.
+// The return values are the root term and any errors that may have occured.
 func (c *Clause) Parse(r io.Reader, ops OpTable, ns *Namespace) (Term, []error) {
 	// parse the term
 	p := parser{
@@ -69,7 +70,7 @@ func (c *Clause) Parse(r io.Reader, ops OpTable, ns *Namespace) (Term, []error) 
 	t, _ := p.readTerm(1200)
 	h := Clause(append(p.heap, t))
 
-	// ensure all subterms use the same storage and set the clause
+	// ensure all subterms use the same storage
 	// (the heap may have been reallocated during parsing)
 	if (*c) != nil && &(*c)[0] != &h[0] {
 		for i, t := range h {
