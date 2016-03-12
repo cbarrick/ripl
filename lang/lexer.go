@@ -70,34 +70,32 @@ func Lex(r io.Reader) <-chan Lexeme {
 }
 
 func (tok *Lexeme) String() string {
-	return fmt.Sprintf("%q (%v)", tok.Tok, tok.Typ)
-}
-
-func (typ LexType) String() string {
-	switch typ {
+	var typ string
+	switch tok.Typ {
 	case LexErr:
-		return "Lex Error"
+		typ = "Lex Error"
 	case SpaceTok:
-		return "Whitespace"
+		typ = "Whitespace"
 	case CommentTok:
-		return "Comment"
+		typ = "Comment"
 	case FunctTok:
-		return "Functor"
+		typ = "Functor"
 	case StringTok:
-		return "String"
+		typ = "String"
 	case NumTok:
-		return "Number"
+		typ = "Number"
 	case VarTok:
-		return "Variable"
+		typ = "Variable"
 	case ParenOpen, ParenClose,
 		BracketOpen, BracketClose,
 		BraceOpen, BraceClose:
-		return "Paren"
+		typ = "Paren"
 	case TerminalTok:
-		return "Terminal"
+		typ = "Terminal"
 	default:
 		panic("unknown lexeme type")
 	}
+	return fmt.Sprintf("%q (%v)", tok.Tok, typ)
 }
 
 // State Machine Infrastructure
