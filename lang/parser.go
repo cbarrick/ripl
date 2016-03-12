@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-
-	"github.com/cbarrick/ripl/lang/value"
 )
 
 // API
@@ -16,7 +14,7 @@ type Clause []Term
 
 // A Term is a Prolog term. A term is a syntax tree of functors and arguments.
 type Term struct {
-	Name value.Name
+	Name Name
 	Args []Term
 }
 
@@ -32,7 +30,7 @@ func (t Term) Atomic() bool {
 
 // Atom returns true if t is an atom.
 func (t Term) Atom() bool {
-	return t.Name.Typ == value.FunctorTyp && t.Atomic()
+	return t.Name.Typ == FunctorTyp && t.Atomic()
 }
 
 // String returns the canonical form of t.
@@ -58,40 +56,38 @@ func (t Term) String() string {
 // Parse reads a clause from r with respect to some operator table. Subterms are
 // appended onto the heap in bottom-up level-order. The new heap slice is
 // returned, and the backing array may be reallocated.
-func Parse(r io.Reader, heap []Term, ops OpTable, ns *value.Namespace) (Clause, []Term, []error) {
+func (c *Clause) Parse(r io.Reader, ops OpTable, ns *Namespace) (Term, []error) {
 	// parse the term
-	var start = len(heap)
 	p := parser{
 		lexer: Lex(r),
 		ops:   ops,
-		heap:  heap,
+		heap:  (*c)[:0],
 		offs:  make(map[string]int, 16), // TODO: give this a default size
 		ns:    ns,
 	}
 	p.next() // prime the buffer
 	t, _ := p.readTerm(1200)
-	h := append(p.heap, t)
-	c := Clause(h[start:])
+	h := Clause(append(p.heap, t))
 
-	// ensure all subterms use the same storage
+	// ensure all subterms use the same storage and set the clause
 	// (the heap may have been reallocated during parsing)
-	if len(heap) != 0 && &h[0] != &heap[0] {
-		for i, sub := range c {
-			off := p.offs[sub.String()]
-			end := off + len(sub.Args)
-			c[i].Args = h[off:end]
+	if (*c) != nil && &(*c)[0] != &h[0] {
+		for i, t := range h {
+			off := p.offs[t.String()]
+			end := off + len(t.Args)
+			h[i].Args = h[off:end]
 		}
+		t = h[len(h)-1]
 	}
+	*c = h
 
 	if p.buf.Typ != TerminalTok {
 		p.reportf("operator priority clash")
 	}
-
 	if len(p.errs) != 0 {
-		return nil, nil, p.errs
+		return t, p.errs
 	}
-
-	return c, h, nil
+	return t, nil
 }
 
 // Parser
@@ -100,11 +96,11 @@ func Parse(r io.Reader, heap []Term, ops OpTable, ns *value.Namespace) (Clause, 
 type parser struct {
 	lexer <-chan Lexeme
 	ops   OpTable
-	heap  []Term           // global storage for all terms
-	offs  map[string]int   // offsets of terms, keyed by canonical string
-	ns    *value.Namespace // all terms of a clause share the same namespace
-	buf   Lexeme           // the most recently read token
-	args  [16]Term         // scratch space for parsing argument lists
+	heap  []Term         // global storage for all terms
+	offs  map[string]int // offsets of terms, keyed by canonical string
+	ns    *Namespace     // all terms of a clause share the same namespace
+	buf   Lexeme         // the most recently read token
+	args  [16]Term       // scratch space for parsing argument lists
 	errs  []error
 }
 

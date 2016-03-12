@@ -5,20 +5,20 @@ import (
 	"strings"
 
 	"github.com/cbarrick/ripl/lang"
-	"github.com/cbarrick/ripl/lang/value"
 )
 
 func ExampleParse() {
 	var input = strings.NewReader("a + b * c - d")
-	var heap = make([]lang.Term, 0, 8)
 	var ops = lang.DefaultOps()
-	var ns = new(value.Namespace)
-	c, heap, err := lang.Parse(input, heap, ops, ns)
+	var ns = new(lang.Namespace)
+	var c = make(lang.Clause, 4)
+	t, err := c.Parse(input, ops, ns)
 	if err != nil {
 		fmt.Println("Error:", err)
+	} else {
+		fmt.Println("Term:", t)
 	}
-	fmt.Println("Term:", c.Root())
-	fmt.Println("Heap:", heap)
+	fmt.Println("Heap:", c)
 	// Output:
 	// Term: -(+(a,*(b,c)),d)
 	// Heap: [b c a *(b,c) +(a,*(b,c)) d -(+(a,*(b,c)),d)]

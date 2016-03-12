@@ -22,7 +22,7 @@ func ExampleLex() {
 		fmt.Println(&l)
 	}
 	// Output:
-	// 	"a" (Functor)
+	// "a" (Functor)
 	// " " (Whitespace)
 	// "+" (Functor)
 	// " " (Whitespace)
@@ -49,5 +49,5 @@ func ExampleLex_eof() {
 	// "(" (Paren)
 	// "bar" (Functor)
 	// ")" (Paren)
-	// "." (Terminal)
+	// "" (Terminal)
 }

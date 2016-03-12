@@ -1,4 +1,4 @@
-package value
+package lang
 
 import (
 	"bytes"
@@ -21,8 +21,7 @@ type ValueType int
 
 // Types of term.
 const (
-	ErrorTyp ValueType = iota
-	FunctorTyp
+	FunctorTyp ValueType = iota
 	VariableTyp
 	StringTyp
 	NumberTyp
@@ -123,19 +122,4 @@ func (v *Variable) Scan(state fmt.ScanState, verb rune) (err error) {
 
 func (*Variable) Type() ValueType {
 	return VariableTyp
-}
-
-// Error values are used for handling I/O errors.
-type Error struct{ E error }
-
-func (err Error) String() string {
-	return err.E.Error()
-}
-
-func (err Error) Scan(state fmt.ScanState, verb rune) error {
-	panic("cannot scan Error values")
-}
-
-func (Error) Type() ValueType {
-	return ErrorTyp
 }
