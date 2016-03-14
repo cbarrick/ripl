@@ -1,37 +1,31 @@
 package lang
 
-import (
-	"hash"
-	"hash/fnv"
-)
+import "github.com/cbarrick/ripl/lang/types"
 
-// A Namespace stores and provides Names for Values. A Name is generated for
-// each equivalent value the first time it is encountered.
 type Namespace struct {
-	h hash.Hash64
+	names map[string]Name
 }
 
-// A Name is a wrapper around a Value. It provides enough information to perform
-// unification without accessing the value.
 type Name struct {
-	ID  uint64
-	Typ ValueType
-	Val Value
-	Ns  *Namespace
+	Val types.Value
+	Typ types.ValueType
 }
 
-// Name provides a name to a value.
-// The same Name is given to equivalent Values.
-func (ns *Namespace) Name(v Value) (n Name) {
-	if ns.h == nil {
-		ns.h = fnv.New64a()
+func NewNamespace(cap int) *Namespace {
+	return &Namespace{
+		names: make(map[string]Name, cap),
 	}
-	ns.h.Write([]byte(v.String()))
-	n = Name{
-		ID:  ns.h.Sum64(),
-		Typ: v.Type(),
-		Val: v,
-		Ns:  ns,
+}
+
+func (ns *Namespace) Name(v types.Value) (n Name) {
+	key := v.String()
+	n = ns.names[key]
+	if n.Val == nil {
+		n = Name{
+			Val: v,
+			Typ: v.Type(),
+		}
+		ns.names[key] = n
 	}
 	return n
 }
