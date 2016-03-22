@@ -1,71 +1,32 @@
-package lang
+package term
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 
-	"github.com/cbarrick/ripl/lang/types"
+	"github.com/cbarrick/ripl/lang/oper"
 )
+
+// A parser contains the global state of the parsing algorithm.
+type parser struct {
+	lexer <-chan Lexeme // yields Lexemes to parse
+	ops   oper.Table    // operators to parse
+	ns    *Namespace    // the symbol table, parsing may add new symbols
+	heap  []Term        // the clause is built onto this slice
+	offs  map[int]int   // maps term id to offset of first argument
+	buf   Lexeme        // the most recently read token
+	args  [16]Term      // scratch space for parsing argument lists
+	id    int           // generator for term ids
+	errs  []error       // all errors encountered
+}
 
 // The default initial capacity of clause heaps
 const defaultClauseSize = 32
 
-// API
-// --------------------------------------------------
-
-// A Clause is a single term stored contiguously in bottom-up order.
-type Clause struct {
-	root Term
-	heap []Term
-}
-
-// A Term is a Prolog term. A term is a syntax tree of functors and arguments.
-type Term struct {
-	id   int
-	name Name
-	args []Term
-}
-
-// Root returns the root term of the clause.
-func (c Clause) Root() Term {
-	return c.root
-}
-
-// Atomic returns true if t is not a compound term.
-func (t Term) Atomic() bool {
-	return len(t.args) == 0
-}
-
-// Atom returns true if t is an atom.
-func (t Term) Atom() bool {
-	return t.name.Typ == types.FunctorTyp && t.Atomic()
-}
-
-// String returns the canonical form of t.
-func (t Term) String() string {
-	var buf = new(bytes.Buffer)
-	buf.WriteString(t.name.String())
-	if len(t.args) > 0 {
-		var open bool
-		for _, arg := range t.args {
-			if !open {
-				buf.WriteRune('(')
-				open = true
-			} else {
-				buf.WriteRune(',')
-			}
-			buf.WriteString(arg.String())
-		}
-		buf.WriteRune(')')
-	}
-	return buf.String()
-}
-
 // Parse reads a clause from r with respect to some operator table.
 // Syntactically, a clause is a Prolog term followed by a period.
 // The clause is built in bottom-up order.
-func Parse(r io.Reader, ops OpTable, ns *Namespace) (c Clause, errs []error) {
+func Parse(r io.Reader, ops oper.Table, ns *Namespace) (c Clause, errs []error) {
 	// parse the term
 	p := parser{
 		lexer: Lex(r),
@@ -94,33 +55,21 @@ func Parse(r io.Reader, ops OpTable, ns *Namespace) (c Clause, errs []error) {
 	return c, p.errs
 }
 
-// Parser
-// --------------------------------------------------
-
-type parser struct {
-	lexer <-chan Lexeme
-	ops   OpTable
-	ns    *Namespace
-	heap  []Term      // the clause is built onto this slice
-	offs  map[int]int // maps term id to offset of first argument
-	buf   Lexeme      // the most recently read token
-	args  [16]Term    // scratch space for parsing argument lists
-	id    int
-	errs  []error
-}
-
-func (p *parser) nextId() (id int) {
+// nextID generates a unique ID for every call.
+func (p *parser) nextID() (id int) {
 	id = p.id
 	p.id++
 	return id
 }
 
+// next reads the next Lexeme into the buffer.
 func (p *parser) next() (tok Lexeme) {
 	tok = <-p.lexer
 	p.buf = tok
 	return tok
 }
 
+// skip space advances until the next non-space token.
 func (p *parser) skipSpace() (tok Lexeme) {
 	tok = p.buf
 	for tok.Typ == SpaceTok || tok.Typ == CommentTok {
@@ -134,6 +83,9 @@ func (p *parser) reportf(format string, args ...interface{}) {
 	err := fmt.Errorf("%d:%d: %s", p.buf.Line+1, p.buf.Col, msg)
 	p.errs = append(p.errs, err)
 }
+
+// Parser State Machine
+// --------------------------------------------------
 
 func (p *parser) readTerm(maxprec uint) (t Term, ok bool) {
 	if t, ok = p.read(); !ok {
@@ -156,19 +108,19 @@ func (p *parser) read() (t Term, ok bool) {
 		return p.readFunctor(), true
 
 	case StringTok:
-		t.id = p.nextId()
+		t.id = p.nextID()
 		t.name = p.ns.Name(tok.Val)
 		p.next()
 		return t, true
 
 	case NumTok:
-		t.id = p.nextId()
+		t.id = p.nextID()
 		t.name = p.ns.Name(tok.Val)
 		p.next()
 		return t, true
 
 	case VarTok:
-		t.id = p.nextId()
+		t.id = p.nextID()
 		t.name = p.ns.Name(tok.Val)
 		p.next()
 		return t, true
@@ -188,7 +140,6 @@ func (p *parser) read() (t Term, ok bool) {
 }
 
 func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
-
 	if lhs.Atom() {
 		for op := range p.ops.Get(lhs.name.String()) {
 			if maxprec < op.Prec {
@@ -197,10 +148,10 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 
 			prec := op.Prec
 			switch op.Typ {
-			case FX:
+			case oper.FX:
 				prec--
 				fallthrough
-			case FY:
+			case oper.FY:
 				if rhs, ok := p.readTerm(prec); ok {
 					off := len(p.heap)
 					p.offs[lhs.id] = off
@@ -219,11 +170,11 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 		for op := range p.ops.Get(f.Val.String()) {
 			if maxprec < op.Prec {
 				continue
-			} else if op.Typ == XF || op.Typ == XFX || op.Typ == XFY {
+			} else if op.Typ == oper.XF || op.Typ == oper.XFX || op.Typ == oper.XFY {
 				if op.Prec <= lhsprec {
 					continue
 				}
-			} else if op.Typ == YF || op.Typ == YFX {
+			} else if op.Typ == oper.YF || op.Typ == oper.YFX {
 				if op.Prec < lhsprec {
 					continue
 				}
@@ -237,25 +188,25 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 
 			prec := op.Prec
 			switch op.Typ {
-			case XF, YF:
+			case oper.XF, oper.YF:
 				off := len(p.heap)
 				p.heap = append(p.heap, lhs)
 				t = Term{
-					id:   p.nextId(),
+					id:   p.nextID(),
 					args: p.heap[off:],
 					name: p.ns.Name(f.Val),
 				}
 				p.offs[t.id] = off
 				return p.readOp(t, op.Prec, maxprec)
-			case XFX, YFX:
+			case oper.XFX, oper.YFX:
 				prec--
 				fallthrough
-			case XFY:
+			case oper.XFY:
 				if rhs, ok := p.readTerm(prec); ok {
 					off := len(p.heap)
 					p.heap = append(p.heap, lhs, rhs)
 					t = Term{
-						id:   p.nextId(),
+						id:   p.nextID(),
 						args: p.heap[off:],
 						name: p.ns.Name(f.Val),
 					}
@@ -270,7 +221,7 @@ func (p *parser) readOp(lhs Term, lhsprec uint, maxprec uint) Term {
 }
 
 func (p *parser) readFunctor() (t Term) {
-	t.id = p.nextId()
+	t.id = p.nextID()
 	t.name = p.ns.Name(p.buf.Val)
 	tok := p.next()
 	if tok.Typ == ParenOpen {

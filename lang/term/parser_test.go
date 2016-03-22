@@ -1,17 +1,18 @@
-package lang_test
+package term_test
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/cbarrick/ripl/lang"
+	"github.com/cbarrick/ripl/lang/oper"
+	"github.com/cbarrick/ripl/lang/term"
 )
 
 func ExampleParse() {
 	var input = strings.NewReader("a + b * c - d")
-	var ops = lang.DefaultOps()
-	var ns = lang.NewNamespace(16)
-	c, err := lang.Parse(input, ops, ns)
+	var ops = oper.DefaultOps()
+	var ns = term.NewNamespace(16)
+	c, err := term.Parse(input, ops, ns)
 	if err != nil {
 		fmt.Println("Error:", err)
 	} else {

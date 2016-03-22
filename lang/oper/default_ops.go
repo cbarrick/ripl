@@ -1,8 +1,7 @@
-package lang
-
-import "sort"
+package oper
 
 // These are the default operators.
+// This slice must be sorted!
 var defaultOps = []Op{
 	{700, XFX, "\\=@="},
 	{400, YFX, "rdiv"},
@@ -24,8 +23,8 @@ var defaultOps = []Op{
 	{1050, XFY, "->"},
 	{400, YFX, "//"},
 	{500, YFX, "/\\"},
-	{1200, XFX, ":-"},
 	{1200, FX, ":-"},
+	{1200, XFX, ":-"},
 	{700, XFX, ":<"},
 	{990, XFX, ":="},
 	{400, YFX, "<<"},
@@ -58,8 +57,4 @@ var defaultOps = []Op{
 	{200, FY, "\\"},
 	{200, XFY, "^"},
 	{1100, XFY, "|"},
-}
-
-func init() {
-	sort.Sort(opOrd(defaultOps))
 }

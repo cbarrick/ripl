@@ -1,4 +1,4 @@
-package lang
+package term
 
 import "github.com/cbarrick/ripl/lang/types"
 
