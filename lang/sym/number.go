@@ -17,6 +17,14 @@ func NewNumber(str string) (n *Number) {
 	return n
 }
 
+// Type returns either Int or Float.
+func (n *Number) Type() PLType {
+	if n.IsInt() {
+		return Int
+	}
+	return Float
+}
+
 // String returns the canonical representation of the number.
 func (n *Number) String() string {
 	if n.IsInt() {
@@ -46,11 +54,10 @@ func (n *Number) Float64() (f float64) {
 // Variables sort before Numbers, and everything else sorts after Numbers.
 func (n *Number) Cmp(s Symbol) int {
 	switch s := s.(type) {
-	case *Variable:
-		return +1
 	case *Number:
 		return n.Rat.Cmp(&s.Rat)
 	default:
-		return -1
+		// PLTypes are enumerated in reverse sort order.
+		return int(s.Type() - n.Type())
 	}
 }

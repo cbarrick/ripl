@@ -31,10 +31,13 @@ func (n Name) Cmp(m Name) int {
 	switch {
 	case n.NSID != m.NSID:
 		panic("cannot compare names from different namespaces (NSID mismatch)")
-	case n.Type < m.Type:
-		return -1
+
+	// PLTypes are enumerated in reverse sort order.
 	case m.Type < n.Type:
+		return -1
+	case n.Type < m.Type:
 		return +1
+
 	case n.Type == Int:
 		return int(n.Hash - m.Hash)
 	case n.Addr < m.Addr:
