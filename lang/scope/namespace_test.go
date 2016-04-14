@@ -1,15 +1,16 @@
-package sym_test
+package scope_test
 
 import (
 	"testing"
 
-	"github.com/cbarrick/ripl/lang/sym"
+	"github.com/cbarrick/ripl/lang/lex"
+	"github.com/cbarrick/ripl/lang/scope"
 )
 
 func TestEquality(t *testing.T) {
-	ns := new(sym.Namespace)
-	foo := sym.NewFunctor("foo")
-	foo2 := sym.NewFunctor("foo")
+	ns := scope.Namespace{}
+	foo := lex.NewFunctor("foo")
+	foo2 := lex.NewFunctor("foo")
 	n1 := ns.Name(foo)
 	n2 := ns.Name(foo2)
 	if !(n1 == n2 && n1.Cmp(n2) == 0) {
@@ -18,11 +19,11 @@ func TestEquality(t *testing.T) {
 }
 
 func TestOrder(t *testing.T) {
-	ns := new(sym.Namespace)
+	ns := scope.Namespace{}
 
-	v := sym.NewVariable("_1")
-	num := sym.NewNumber("1")
-	funct := sym.NewFunctor("1")
+	v := lex.NewVariable("_1")
+	num := lex.NewNumber("1")
+	funct := lex.NewFunctor("1")
 	n1 := ns.Name(v)
 	n2 := ns.Name(num)
 	n3 := ns.Name(funct)
@@ -36,16 +37,16 @@ func TestOrder(t *testing.T) {
 		t.Error("variables should sort before functors")
 	}
 
-	foo := sym.NewFunctor("foo")
-	bar := sym.NewFunctor("bar")
+	foo := lex.NewFunctor("foo")
+	bar := lex.NewFunctor("bar")
 	n4 := ns.Name(foo)
 	n5 := ns.Name(bar)
 	if n4.Cmp(n5) != +1 || foo.Cmp(bar) != +1 {
 		t.Error("'foo' should sort after 'bar'")
 	}
 
-	one := sym.NewNumber("1")
-	two := sym.NewNumber("2")
+	one := lex.NewNumber("1")
+	two := lex.NewNumber("2")
 	n6 := ns.Name(one)
 	n7 := ns.Name(two)
 	if !(n6.Cmp(n7) < 0 && one.Cmp(two) < 0) {

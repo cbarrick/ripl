@@ -1,4 +1,4 @@
-package term
+package lex
 
 import (
 	"bufio"
@@ -8,46 +8,27 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cbarrick/ripl/lang/types"
-
 	"golang.org/x/text/unicode/norm"
 )
-
-// Norm is the form to which unicode input is normalized.
-const Norm = norm.NFD
-
-// ASCIISymbols gives the valid ascii characters for a symbol functor.
-const ASCIISymbols = "~`!@#$%^&*_-+=|\\:;\"<,>.?/"
-
-// UnicodeSymbols gives the valid runes for a symbol functor.
-var UnicodeSymbols = []*unicode.RangeTable{
-	unicode.Symbol,
-	unicode.Pc, // punctuation, connector
-	unicode.Pd, // punctuation, dash
-	unicode.Po, // punctuation, other (contains '!', and ',')
-}
-
-// ErrInvalidEnc is the error returned when the input cannot be lexed.
-var ErrInvalidEnc = fmt.Errorf("invalid encoding")
 
 // API
 // --------------------------------------------------
 
 // A Lexeme is a lexical item of Prolog.
 type Lexeme struct {
-	Typ  LexType
-	Val  types.Value
+	Symbol
+	Type
 	Tok  string
-	Line int // zero-based line for the start of this token
-	Col  int // zero-based column for the start of this token
+	Line int
+	Col  int
 }
 
-// A LexType classifies types of lexeme.
-type LexType int
+// A Type classifies types of lexeme.
+type Type int
 
 // The types of lexeme.
 const (
-	LexErr LexType = iota
+	LexErr Type = iota
 	SpaceTok
 	CommentTok
 	FunctTok
@@ -72,7 +53,7 @@ func Lex(r io.Reader) <-chan Lexeme {
 
 func (tok Lexeme) String() string {
 	var typ string
-	switch tok.Typ {
+	switch tok.Type {
 	case LexErr:
 		typ = "Lex Error"
 	case SpaceTok:
@@ -102,6 +83,12 @@ func (tok Lexeme) String() string {
 // State Machine Infrastructure
 // --------------------------------------------------
 
+// Norm is the form to which unicode input is normalized.
+const Norm = norm.NFC
+
+// ErrInvalidEnc is the error returned when the input cannot be lexed.
+var ErrInvalidEnc = fmt.Errorf("input must be UTF-8")
+
 // A lexer contains the global state for the lexer state-machine.
 type lexer struct {
 	rd    *bufio.Reader
@@ -115,11 +102,10 @@ type lexer struct {
 }
 
 // lexStates encode the lexer state-machine. lexStates are functions that
-// receive a pointer to the global state, modify that state, and return the next
-// lexState of the machine.
+// receive a pointer to the global lexer state, modify that state, and return
+// the next lexState of the machine.
 //
-// The machine halts when a lexState returns nil. Alternativly, if a lexState
-// panics, a Lexeme of type LexErr is emitted, and the machine halts.
+// The machine halts when a lexState returns nil or panics.
 type lexState func(*lexer) lexState
 
 // lex is the entry point of the lexing goroutine.
@@ -138,7 +124,7 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 		if err, ok := err.(error); ok {
 			if err != nil {
 				ret <- Lexeme{
-					Typ:  LexErr,
+					Type: LexErr,
 					Tok:  err.Error(),
 					Line: l.line,
 					Col:  l.col,
@@ -224,9 +210,10 @@ func (l *lexer) acceptRun(chars string, ranges ...*unicode.RangeTable) (r rune, 
 
 // Emit sends a lexeme to the user of the given type and value
 // and flushes the buffer.
-func (l *lexer) emit(typ LexType, val types.Value) {
+func (l *lexer) emit(typ Type, sym Symbol) {
+	var tok = l.buf.String()
 	var dl, dc int // change in line/column over this token
-	for r := range l.buf.String() {
+	for r := range tok {
 		switch r {
 		case '\r':
 			dc = -l.col
@@ -238,11 +225,13 @@ func (l *lexer) emit(typ LexType, val types.Value) {
 		}
 	}
 
-	tok := l.buf.String()
-	if val != nil {
-		fmt.Fscan(l.buf, val)
+	if sym != nil {
+		_, err := fmt.Fscan(l.buf, sym)
+		if err != nil {
+			panic(err)
+		}
 	}
-	l.ret <- Lexeme{typ, val, tok, l.line, l.col}
+	l.ret <- Lexeme{sym, typ, tok, l.line + 1, l.col + 1}
 
 	l.line += dl
 	l.col += dc
@@ -251,12 +240,11 @@ func (l *lexer) emit(typ LexType, val types.Value) {
 
 // Prolog Lexer State Machine
 // --------------------------------------------------
-// This is the state machine to lex Prolog.
 
 // the start state of the machine.
-var startState lexState = lexAny
+var startState lexState = any
 
-func lexAny(l *lexer) lexState {
+func any(l *lexer) lexState {
 	r := l.cur
 	switch {
 
@@ -264,59 +252,58 @@ func lexAny(l *lexer) lexState {
 	case unicode.IsSpace(r):
 		l.acceptRun(" \t\r\n", unicode.Space)
 		l.emit(SpaceTok, nil)
-		return lexAny
+		return any
 	case r == '%':
 		l.readTo('\n')
 		l.emit(CommentTok, nil)
-		return lexAny
+		return any
 
 	// cuts, commas, and dots are special cases
 	case r == '!':
 		l.read()
-		l.emit(FunctTok, new(types.Functor))
-		return lexAny
+		l.emit(FunctTok, new(Functor))
+		return any
 	case r == ',':
 		l.read()
-		l.emit(FunctTok, new(types.Functor))
-		return lexAny
+		l.emit(FunctTok, new(Functor))
+		return any
 	case r == '.':
 		l.read()
-		return emitDot
+		return dot
 
 	// parens, brackets, and braces
 	case strings.ContainsRune("([{}])", r):
-		return lexParen
+		return paren
 
 	// numbers may be preceeded by a negative
 	case r == '-':
 		l.read()
 		r = l.cur
 		if r < '0' || '9' < r {
-			return lexSymbols
+			return symbols
 		}
 		fallthrough
 	case '0' < r && r < '9':
-		return lexNumber
+		return number
 
 	// quoted tokens may contain escape characters
-	case r == '"' || r == '\'':
-		return lexQuote
+	case r == '\'':
+		return quote
 
-	// variables always refer to the same value,
-	// so we use the vars map to keep consistent identifiers
+	// if it starts with an '_' underscore or an uppercase letter, it's a variable
 	case r == '_' || unicode.IsUpper(r):
-		return lexVar
+		return capital
 
-	// if it starts with a letter and is not a variable, it is a functor
+	// if it starts with a letter and is not a variable, it's a functor
 	case unicode.IsLetter(r):
-		return lexLetters
+		return lower
 
 	// consecutive symbols are also functors
-	case strings.ContainsRune(ASCIISymbols, r) || unicode.IsOneOf(UnicodeSymbols, r):
-		return lexSymbols
+	case strings.ContainsRune(ASCIISymbols, r) || unicode.In(r, Symbols...):
+		return symbols
 
 	// auto-insert terminal at eof
-	case r == 0:
+	case l.eof:
 		l.emit(TerminalTok, nil)
 		return nil
 
@@ -326,7 +313,7 @@ func lexAny(l *lexer) lexState {
 	}
 }
 
-func lexParen(l *lexer) lexState {
+func paren(l *lexer) lexState {
 	r := l.cur
 	l.read()
 	switch r {
@@ -349,10 +336,10 @@ func lexParen(l *lexer) lexState {
 		l.depth--
 		l.emit(BraceClose, nil)
 	}
-	return lexAny
+	return any
 }
 
-func emitDot(l *lexer) lexState {
+func dot(l *lexer) lexState {
 	if l.depth == 0 {
 		r := l.cur
 		if r == 0 || unicode.IsSpace(r) {
@@ -360,60 +347,52 @@ func emitDot(l *lexer) lexState {
 			return nil
 		}
 	}
-	return lexSymbols
+	return symbols
 }
 
-func lexNumber(l *lexer) lexState {
+func number(l *lexer) lexState {
 	l.acceptRun("1234567890")
 	_, a := l.accept(".")
 	_, b := l.acceptRun("1234567890")
 	if a && !b {
-		l.emit(NumTok, new(types.Number))
+		l.emit(NumTok, new(Number))
 		l.buf.WriteByte('.')
-		return emitDot
+		return dot
 	}
 	l.accept("e")
 	l.accept("+-")
 	l.acceptRun("1234567890")
-	l.emit(NumTok, new(types.Number))
-	return lexAny
+	l.emit(NumTok, new(Number))
+	return any
 }
 
-func lexVar(l *lexer) lexState {
-	l.acceptRun("_", unicode.Letter)
-	l.emit(VarTok, new(types.Variable))
-	return lexAny
+func capital(l *lexer) lexState {
+	l.acceptRun(ASCIILetters, Letters...)
+	l.emit(VarTok, new(Variable))
+	return any
 }
 
-func lexLetters(l *lexer) lexState {
-	l.acceptRun("_", unicode.Letter)
-	l.emit(FunctTok, new(types.Functor))
-	return lexAny
+func lower(l *lexer) lexState {
+	l.acceptRun(ASCIILetters, Letters...)
+	l.emit(FunctTok, new(Functor))
+	return any
 }
 
-func lexSymbols(l *lexer) lexState {
-	l.acceptRun(ASCIISymbols, UnicodeSymbols...)
-	l.emit(FunctTok, new(types.Functor))
-	return lexAny
+func symbols(l *lexer) lexState {
+	l.acceptRun(ASCIISymbols, Symbols...)
+	l.emit(FunctTok, new(Functor))
+	return any
 }
 
-func lexQuote(l *lexer) lexState {
-	var quote = l.cur
-	var typ LexType
-	switch quote {
-	case '\'':
-		typ = FunctTok
-	case '"':
-		typ = StringTok
-	}
+func quote(l *lexer) lexState {
 	var r = l.read()
-	for r != quote {
+	for r != '\'' {
 		r = l.read()
 		if r == '\\' {
 			r = l.read()
 		}
 	}
 	l.read()
-	l.emit(typ, new(types.Functor))
-	return lexAny
+	l.emit(FunctTok, new(Functor))
+	return any
 }

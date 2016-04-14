@@ -3,7 +3,7 @@ package oper
 // An Op describes the parsing rules for an operator.
 type Op struct {
 	Prec uint   // precedence
-	Typ  OpType // position and associativity
+	Type OpType // position and associativity
 	Name string // text representation of the operator
 }
 
@@ -73,7 +73,7 @@ func (t opOrd) Less(i, j int) bool {
 	if len(t[i].Name) == len(t[j].Name) {
 		if t[i].Name == t[j].Name {
 			if t[i].Prec == t[j].Prec {
-				return t[i].Typ < t[j].Typ
+				return t[i].Type < t[j].Type
 			}
 			return t[i].Prec > t[j].Prec
 		}

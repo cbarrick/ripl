@@ -1,8 +1,10 @@
-package sym
+package lex
 
 import (
 	"fmt"
 	"math/big"
+
+	"github.com/cbarrick/ripl/lang/types"
 )
 
 // A Number represents a number in Prolog.
@@ -18,11 +20,11 @@ func NewNumber(str string) (n *Number) {
 }
 
 // Type returns either Int or Float.
-func (n *Number) Type() PLType {
+func (n *Number) Type() types.PLType {
 	if n.IsInt() {
-		return Int
+		return types.Int
 	}
-	return Float
+	return types.Float
 }
 
 // String returns the canonical representation of the number.
@@ -32,6 +34,11 @@ func (n *Number) String() string {
 	}
 	f := n.Float64()
 	return fmt.Sprint(f)
+}
+
+// Scan scans a Number in Prolog syntax.
+func (n *Number) Scan(state fmt.ScanState, verb rune) error {
+	return n.Rat.Scan(state, verb)
 }
 
 // Hash returns the integer part of the number.

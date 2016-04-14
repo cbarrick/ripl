@@ -29,9 +29,9 @@ func (t *Table) Insert(op Op) (exists bool) {
 	i := t.search(op.Name)
 	j := i
 	for j < n && t.ops[j].Name == op.Name {
-		if (t.ops[j].Typ.Infix() && op.Typ.Infix()) ||
-			(t.ops[j].Typ.Prefix() && op.Typ.Prefix()) ||
-			(t.ops[j].Typ.Postfix() && op.Typ.Postfix()) {
+		if (t.ops[j].Type.Infix() && op.Type.Infix()) ||
+			(t.ops[j].Type.Prefix() && op.Type.Prefix()) ||
+			(t.ops[j].Type.Postfix() && op.Type.Postfix()) {
 			t.ops[j] = op
 			exists = true
 		}

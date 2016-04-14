@@ -1,10 +1,15 @@
-package sym
+package lex
 
 import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/cbarrick/ripl/lang/types"
 )
+
+// ErrBadVar is the error returned when failing to scan a variable.
+var ErrBadVar = fmt.Errorf("malformed variable")
 
 // A Variable represents a logical variable.
 type Variable struct {
@@ -17,8 +22,8 @@ func NewVariable(str string) *Variable {
 }
 
 // Type returns Var.
-func (v *Variable) Type() PLType {
-	return Var
+func (v *Variable) Type() types.PLType {
+	return types.Var
 }
 
 // String returns the canonical representation of the variable.
@@ -26,8 +31,7 @@ func (v *Variable) String() string {
 	return v.Val
 }
 
-// Scan initializes a variable from a reader.
-// The first token is taken as the variable name.
+// Scan scans a Variable in Prolog syntax.
 func (v *Variable) Scan(state fmt.ScanState, verb rune) error {
 	var tok []byte
 	r, _, err := state.ReadRune()
@@ -35,10 +39,10 @@ func (v *Variable) Scan(state fmt.ScanState, verb rune) error {
 		return err
 	}
 	if !unicode.IsUpper(r) && r != '_' {
-		return fmt.Errorf("invalid variable name")
+		return ErrBadVar
 	}
 	tok, err = state.Token(false, func(r rune) bool {
-		return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
+		return unicode.In(r, Letters...)
 	})
 	*v = Variable{string(r) + string(tok)}
 	return err
