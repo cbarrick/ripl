@@ -1,4 +1,4 @@
-package oper
+package ops
 
 // An Op describes the parsing rules for an operator.
 type Op struct {
@@ -58,30 +58,4 @@ func (typ OpType) Infix() bool {
 // Postfix returns true for postfix OpTypes.
 func (typ OpType) Postfix() bool {
 	return typ == XF || typ == YF
-}
-
-// The opOrd type implements operator sorting. Operators are sorted first by
-// descending length of name, then lexicographically by name, then by descending
-// precedence, then by type.
-type opOrd []Op
-
-func (t opOrd) Len() int {
-	return len(t)
-}
-
-func (t opOrd) Less(i, j int) bool {
-	if len(t[i].Name) == len(t[j].Name) {
-		if t[i].Name == t[j].Name {
-			if t[i].Prec == t[j].Prec {
-				return t[i].Type < t[j].Type
-			}
-			return t[i].Prec > t[j].Prec
-		}
-		return t[i].Name < t[j].Name
-	}
-	return len(t[i].Name) > len(t[j].Name)
-}
-
-func (t opOrd) Swap(i, j int) {
-	t[i], t[j] = t[j], t[i]
 }

@@ -1,8 +1,8 @@
-package oper
+package ops
 
 // These are the default operators.
 // This slice must be sorted!
-var defaultOps = []Op{
+var defaultOps = [...]Op{
 	{700, XFX, "\\=@="},
 	{400, YFX, "rdiv"},
 	{1050, XFY, "*->"},

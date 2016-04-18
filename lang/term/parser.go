@@ -5,14 +5,14 @@ import (
 	"io"
 
 	"github.com/cbarrick/ripl/lang/lex"
-	"github.com/cbarrick/ripl/lang/oper"
+	"github.com/cbarrick/ripl/lang/ops"
 	"github.com/cbarrick/ripl/lang/scope"
 )
 
 // A parser contains the global state of the parsing algorithm.
 type parser struct {
 	lexer <-chan lex.Lexeme // yields Lexemes to parse
-	ops   oper.Table        // operators to parse
+	optab ops.Table         // operators to parse
 	ns    *scope.Namespace  // the symbol table, parsing may add new symbols
 	heap  []Subterm         // the clause is built onto this slice
 	buf   lex.Lexeme        // the most recently read token
@@ -27,10 +27,10 @@ const defaultClauseSize = 32
 // Parse reads a clause from r with respect to some operator table.
 // Syntactically, a clause is a Prolog term followed by a period.
 // The clause is built in bottom-up order.
-func Parse(r io.Reader, ops oper.Table, ns *scope.Namespace) (c Clause, errs []error) {
+func Parse(r io.Reader, optab ops.Table, ns *scope.Namespace) (c Clause, errs []error) {
 	p := parser{
 		lexer: lex.Lex(r),
-		ops:   ops,
+		optab: optab,
 		ns:    ns,
 		heap:  make([]Subterm, 0, defaultClauseSize),
 	}
@@ -125,17 +125,17 @@ func (p *parser) read() (t Subterm, ok bool) {
 func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	if lhs.Atom() {
 		str := p.ns.Value(lhs.Key).String()
-		for op := range p.ops.Get(str) {
+		for op := range p.optab.Get(str) {
 			if maxprec < op.Prec {
 				continue
 			}
 
 			prec := op.Prec
 			switch op.Type {
-			case oper.FX:
+			case ops.FX:
 				prec--
 				fallthrough
-			case oper.FY:
+			case ops.FY:
 				if rhs, ok := p.readTerm(prec); ok {
 					lhs.off = len(p.heap)
 					lhs.Arity = 1
@@ -150,14 +150,14 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	f := p.skipSpace()
 	var consumed bool
 	if f.Type == lex.FunctTok {
-		for op := range p.ops.Get(f.Symbol.String()) {
+		for op := range p.optab.Get(f.Symbol.String()) {
 			if maxprec < op.Prec {
 				continue
-			} else if op.Type == oper.XF || op.Type == oper.XFX || op.Type == oper.XFY {
+			} else if op.Type == ops.XF || op.Type == ops.XFX || op.Type == ops.XFY {
 				if op.Prec <= lhsprec {
 					continue
 				}
-			} else if op.Type == oper.YF || op.Type == oper.YFX {
+			} else if op.Type == ops.YF || op.Type == ops.YFX {
 				if op.Prec < lhsprec {
 					continue
 				}
@@ -171,7 +171,7 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 
 			prec := op.Prec
 			switch op.Type {
-			case oper.XF, oper.YF:
+			case ops.XF, ops.YF:
 				t = Subterm{
 					Key:   p.ns.Name(f.Symbol),
 					Arity: 1,
@@ -179,10 +179,10 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 				}
 				p.heap = append(p.heap, lhs)
 				return p.readOp(t, op.Prec, maxprec)
-			case oper.XFX, oper.YFX:
+			case ops.XFX, ops.YFX:
 				prec--
 				fallthrough
-			case oper.XFY:
+			case ops.XFY:
 				if rhs, ok := p.readTerm(prec); ok {
 					t = Subterm{
 						Key:   p.ns.Name(f.Symbol),
