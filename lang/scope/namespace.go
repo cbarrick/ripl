@@ -152,7 +152,7 @@ type treap struct {
 	lex.Symbol
 	addr        float64
 	priority    int64
-	prev, next  *treap
+	lo, hi      float64
 	left, right *treap
 }
 
@@ -173,12 +173,14 @@ func (t *treap) get(addr float64) lex.Symbol {
 
 // address returns the address of a symbol. If the symbol does not yet have an
 // address, it is retained and a suitable address is generated.
-func (t *treap) address(val lex.Symbol) (a float64, root *treap) {
+func (t *treap) address(val lex.Symbol) (addr float64, root *treap) {
 	if t == nil {
 		return 1, &treap{
 			Symbol:   val,
 			addr:     1,
 			priority: rand.Int63(),
+			lo:       0,
+			hi:       2,
 		}
 	}
 
@@ -187,79 +189,65 @@ func (t *treap) address(val lex.Symbol) (a float64, root *treap) {
 		return t.addr, t
 
 	case -1:
-		var prev *treap
+		var left *treap
 		if t.left == nil {
 			root = new(treap)
 			*root = *t
-			a = t.genAddrBefore()
-			prev = &treap{
+			addr = t.addr/2 + t.lo/2
+			left = &treap{
 				Symbol:   val,
-				addr:     a,
-				prev:     root.prev,
-				next:     root,
+				addr:     addr,
+				lo:       root.lo,
+				hi:       root.addr,
 				priority: rand.Int63(),
 			}
-			root.prev = prev
-			root.left = prev
+			root.left = left
 		} else {
-			a, prev = t.left.address(val)
-			if prev == t.left {
-				return a, t
+			addr, left = t.left.address(val)
+			if left == t.left {
+				return addr, t
 			}
 			root = new(treap)
 			*root = *t
-			root.left = prev
+			root.left = left
 		}
-		if prev.priority > root.priority {
-			prev.right, root.left = root, prev.right
-			root = prev
+		if left.priority > root.priority {
+			left.right, root.left = root, left.right
+			left.hi, root.lo = root.hi, left.addr
+			root = left
 		}
 
 	case +1:
-		var next *treap
+		var right *treap
 		if t.right == nil {
 			root = new(treap)
 			*root = *t
-			a = t.genAddrAfter()
-			next = &treap{
+			addr = t.addr/2 + t.hi/2
+			right = &treap{
 				Symbol:   val,
-				addr:     a,
-				prev:     root,
-				next:     root.next,
+				addr:     addr,
+				lo:       root.addr,
+				hi:       root.hi,
 				priority: rand.Int63(),
 			}
-			root.next = next
-			root.right = next
+			root.right = right
 		} else {
-			a, next = t.right.address(val)
-			if next == t.right {
-				return a, t
+			addr, right = t.right.address(val)
+			if right == t.right {
+				return addr, t
 			}
 			root = new(treap)
 			*root = *t
-			root.right = next
+			root.right = right
 		}
-		if next.priority > root.priority {
-			next.left, root.right = root, next.left
-			root = next
+		if right.priority > root.priority {
+			right.left, root.right = root, right.left
+			right.lo, root.hi = root.lo, right.addr
+			root = right
 		}
 	}
 
-	return a, root
-}
-
-func (t *treap) genAddrBefore() float64 {
-	if t.prev == nil {
-		return t.addr / 2
-	}
-	return t.addr/2 + t.prev.addr/2
-}
-
-func (t *treap) genAddrAfter() float64 {
-	if t.next == nil {
-		return t.addr * 2
-	}
-	return t.addr/2 + t.next.addr/2
+	return addr, root
 }
 
 func (t *treap) String() string {
