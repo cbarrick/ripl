@@ -113,7 +113,7 @@ func (ns *Namespace) Name(val lex.Symbol) Key {
 		}
 
 	default:
-		panic("unknown Symbol type")
+		panic(fmt.Errorf("cannot name symbol: %v", val))
 	}
 }
 
@@ -136,7 +136,7 @@ func (ns *Namespace) Value(k Key) lex.Symbol {
 	case types.Var:
 		return ns.heap.get(k.Addr)
 	default:
-		panic("unknown Prolog type")
+		panic(fmt.Errorf("unknown Prolog type for key: %v", k))
 	}
 }
 
