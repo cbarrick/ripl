@@ -8,14 +8,12 @@ import (
 )
 
 // A Number represents a number in Prolog.
-type Number struct {
-	big.Rat
-}
+type Number big.Rat
 
 // NewNumber returns a pointer to a number with the value given as a string.
 func NewNumber(str string) (n *Number) {
 	n = new(Number)
-	n.Rat.SetString(str)
+	(*big.Rat)(n).SetString(str)
 	return n
 }
 
@@ -38,7 +36,7 @@ func (n *Number) String() string {
 
 // Scan scans a Number in Prolog syntax.
 func (n *Number) Scan(state fmt.ScanState, verb rune) error {
-	return n.Rat.Scan(state, verb)
+	return (*big.Rat)(n).Scan(state, verb)
 }
 
 // Hash returns the integer part of the number.
@@ -53,8 +51,18 @@ func (n *Number) Int64() int64 {
 
 // Float64 returns the number as a float64.
 func (n *Number) Float64() (f float64) {
-	f, _ = n.Rat.Float64()
+	f, _ = (*big.Rat)(n).Float64()
 	return f
+}
+
+// IsInt returns true if n is an integer.
+func (n *Number) IsInt() bool {
+	return (*big.Rat)(n).IsInt()
+}
+
+// Num returns the integer part of the number.
+func (n *Number) Num() *big.Int {
+	return (*big.Rat)(n).Num()
 }
 
 // Cmp compares a Number with another symbol. Numbers are sorted by value.
@@ -62,9 +70,19 @@ func (n *Number) Float64() (f float64) {
 func (n *Number) Cmp(s Symbol) int {
 	switch s := s.(type) {
 	case *Number:
-		return n.Rat.Cmp(&s.Rat)
+		return (*big.Rat)(n).Cmp((*big.Rat)(s))
 	default:
 		// PLTypes are enumerated in reverse sort order.
 		return int(s.Type() - n.Type())
 	}
+}
+
+// SetInt64 sets the value of the number to x.
+func (n *Number) SetInt64(x int64) {
+	(*big.Rat)(n).SetInt64(x)
+}
+
+// SetFloat64 sets the value of the number to x.
+func (n *Number) SetFloat64(x float64) {
+	(*big.Rat)(n).SetFloat64(x)
 }

@@ -15,15 +15,12 @@ import (
 var ErrBadFunctor = fmt.Errorf("malformed functor")
 
 // A Functor represents a function symbol.
-type Functor struct {
-	Val string
-}
+type Functor string
 
 // NewFunctor returns a pointer to a functor with the given value.
 func NewFunctor(str string) *Functor {
-	f := new(Functor)
-	fmt.Sscan(str, f)
-	return f
+	f := Functor(str)
+	return &f
 }
 
 // Type returns Funct.
@@ -33,13 +30,13 @@ func (f *Functor) Type() types.PLType {
 
 // String returns the canonical representation of the functor.
 func (f *Functor) String() string {
-	return f.Val
+	return string(*f)
 }
 
 // Hash returns the FNV-64a hash of the functor.
 func (f *Functor) Hash() int64 {
 	h := fnv.New64a()
-	h.Write([]byte(f.Val))
+	h.Write([]byte(*f))
 	return int64(h.Sum64())
 }
 
@@ -48,7 +45,7 @@ func (f *Functor) Hash() int64 {
 func (f *Functor) Cmp(s Symbol) int {
 	switch s := s.(type) {
 	case *Functor:
-		return strings.Compare(f.Val, s.Val)
+		return strings.Compare(string(*f), string(*s))
 	default:
 		// PLTypes are enumerated in reverse sort order.
 		return int(s.Type() - f.Type())
@@ -80,13 +77,13 @@ func (f *Functor) scanBare(first rune, state fmt.ScanState) (err error) {
 		tok, err = state.Token(false, func(r rune) bool {
 			return strings.ContainsRune(ASCIILetters, r) || unicode.In(r, Letters...)
 		})
-		f.Val = string(tok)
+		*f = Functor(tok)
 		return err
 	case unicode.In(first, Symbols...):
 		tok, err = state.Token(false, func(r rune) bool {
 			return strings.ContainsRune(ASCIISymbols, r) || unicode.In(r, Symbols...)
 		})
-		f.Val = string(tok)
+		*f = Functor(tok)
 		return err
 	default:
 		return ErrBadFunctor
@@ -97,7 +94,7 @@ func (f *Functor) scanBare(first rune, state fmt.ScanState) (err error) {
 func (f *Functor) scanSpecial(state fmt.ScanState) error {
 	// The leading '!' has already been consumed from the scan state.
 	// Currently, the only special token we observe is the '!' cut.
-	*f = Functor{"!"}
+	*f = Functor("!")
 	return nil
 }
 
@@ -129,7 +126,7 @@ func (f *Functor) scanQuote(state fmt.ScanState) error {
 	if esc {
 		err = unescape(buf)
 	}
-	f.Val = buf.String()
+	*f = Functor(buf.String())
 	return err
 }
 
