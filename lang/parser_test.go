@@ -13,9 +13,10 @@ func ExampleParse() {
 	var input = strings.NewReader("a + b * c - d")
 	var optab = ops.Default()
 	var ns = new(scope.Namespace)
-	c, err := lang.Parse(input, optab, ns)
-	if err != nil {
-		fmt.Println("Error:", err)
+	p := lang.Parse(input, optab, ns)
+	c := p.Next()
+	if p.Errs != nil {
+		fmt.Println("Error:", p.Errs)
 	} else {
 		fmt.Println("Term:", c)
 	}

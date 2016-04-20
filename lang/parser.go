@@ -9,123 +9,145 @@ import (
 	"github.com/cbarrick/ripl/lang/scope"
 )
 
-// A parser contains the global state of the parsing algorithm.
-type parser struct {
-	lexer <-chan lex.Lexeme // yields Lexemes to parse
-	optab ops.Table         // operators to parse
-	ns    *scope.Namespace  // the symbol table, parsing may add new symbols
+// A Parser iterates over the clauses of a Prolog source. Parsing happens
+// place in parrallel with the main thread. The parser pauses after yielding
+// a directive (:-/1), allowing synchronized access to the operator table and
+// namespace.
+type Parser struct {
+	OpTab ops.Table        // operators to parse
+	Scope *scope.Namespace // the symbol table, parsing may add new symbols
+	Errs  []error          // any errors encountered are reported here
+
+	lexer <-chan lex.Lexeme // main input
+	ret   chan *Clause      // main output
+	sync  chan struct{}     // used to pause after reading directives
 	heap  []Subterm         // the clause is built onto this slice
 	buf   lex.Lexeme        // the most recently read token
 	args  [16]Subterm       // scratch space for parsing argument lists
-	id    int               // generator for term ids
-	errs  []error           // all errors encountered
 }
 
-// The default initial capacity of clause heaps
-const defaultClauseSize = 32
+const (
+	heapSize   = 1024 // initial capacity of parser's heap
+	bufferSize = 4    // initial output buffer size
+)
 
-// Parse reads a clause from r with respect to some operator table.
-// Syntactically, a clause is a Prolog term followed by a period.
-// The clause is built in bottom-up order.
-func Parse(r io.Reader, optab ops.Table, ns *scope.Namespace) (c Clause, errs []error) {
-	p := parser{
+// Parse creates a Parser over r.
+func Parse(r io.Reader, optab ops.Table, sc *scope.Namespace) Parser {
+	p := Parser{
 		lexer: lex.Lex(r),
-		optab: optab,
-		ns:    ns,
-		heap:  make([]Subterm, 0, defaultClauseSize),
+		ret:   make(chan *Clause, bufferSize),
+		sync:  make(chan struct{}),
+		OpTab: optab,
+		Scope: sc,
+		heap:  make([]Subterm, heapSize),
 	}
-	p.next() // prime the buffer
-	t, _ := p.readTerm(1200)
+	go p.run()
+	return p
+}
 
-	c = Clause{
-		Scope: p.ns,
-		heap:  append(p.heap, t),
+// Next returns the next clause or nil when the parser finished.
+func (p *Parser) Next() *Clause {
+	for {
+		select {
+		case <-p.sync:
+			continue
+		case c := <-p.ret:
+			return c
+		}
 	}
+}
 
-	if p.buf.Type != lex.TerminalTok {
-		p.reportf("operator priority clash")
+// run is the entry point for the parser goroutine.
+func (p *Parser) run() {
+	neck := p.Scope.Name(lex.NewFunctor(":-"))
+	for p.buf = range p.lexer {
+		p.heap = p.heap[:0]
+		t, _ := p.read(1200)
+		p.heap = append(p.heap, t)
+
+		c := Clause{
+			Scope: p.Scope,
+			heap:  make([]Subterm, len(p.heap)),
+		}
+		copy(c.heap, p.heap)
+		p.ret <- &c
+
+		if p.buf.Type != lex.TerminalTok {
+			p.reportf("operator priority clash")
+		}
+
+		// pause after directives
+		// this allows the caller to update the operator table, scope, etc
+		if t.Key == neck && t.Arity == 1 {
+			p.sync <- struct{}{}
+		}
 	}
-	return c, p.errs
+	close(p.ret)
+	close(p.sync)
 }
 
 // next reads the next Lexeme into the buffer.
-func (p *parser) next() (tok lex.Lexeme) {
+func (p *Parser) advance() (tok lex.Lexeme) {
 	tok = <-p.lexer
 	p.buf = tok
 	return tok
 }
 
-// skip space advances until the next non-space token.
-func (p *parser) skipSpace() (tok lex.Lexeme) {
+// skipSpace advances until the next non-space, non-comment token.
+func (p *Parser) skipSpace() (tok lex.Lexeme) {
 	tok = p.buf
 	for tok.Type == lex.SpaceTok || tok.Type == lex.CommentTok {
-		tok = p.next()
+		tok = <-p.lexer
 	}
+	p.buf = tok
 	return tok
 }
 
-func (p *parser) reportf(format string, args ...interface{}) {
+// reportf reports an error message.
+// The line and column of the current token are prepended to the message.
+func (p *Parser) reportf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	err := fmt.Errorf("%d:%d: %s", p.buf.Line+1, p.buf.Col, msg)
-	p.errs = append(p.errs, err)
+	p.Errs = append(p.Errs, err)
 }
 
-// Parser State Machine
-// --------------------------------------------------
-
-func (p *parser) readTerm(maxprec uint) (t Subterm, ok bool) {
-	if t, ok = p.read(); !ok {
-		return t, false
-	}
-	t = p.readOp(t, 0, maxprec)
-	return t, true
-}
-
-func (p *parser) read() (t Subterm, ok bool) {
+// read returns the next term with precidence no more than maxprec. It is the
+// entry point of the parser, and is mutually recursive with the other read*
+// methods. It is named after the read/1 predicate.
+func (p *Parser) read(maxprec uint) (t Subterm, ok bool) {
 	p.skipSpace()
 	tok := p.buf
-
 	switch tok.Type {
+	default:
+		t.Key = p.Scope.Name(tok.Symbol)
+		p.advance()
+		return t, true
+
+	case lex.TerminalTok:
+		return t, false
+
 	case lex.LexErr:
 		p.reportf(tok.String())
 		return t, false
 
 	case lex.FunctTok:
-		return p.readFunctor(), true
-
-	case lex.StringTok:
-		t.Key = p.ns.Name(tok.Symbol)
-		p.next()
-		return t, true
-
-	case lex.NumTok:
-		t.Key = p.ns.Name(tok.Symbol)
-		p.next()
-		return t, true
-
-	case lex.VarTok:
-		t.Key = p.ns.Name(tok.Symbol)
-		p.next()
-		return t, true
+		t = p.readFunctor()
+		return p.readOp(t, 0, maxprec), true
 
 	case lex.ParenOpen:
-		return p.readGroup(), true
+		t = p.readGroup()
+		return p.readOp(t, 0, maxprec), true
+
 	case lex.BracketOpen:
-		return p.readList(), true
-
-	case lex.TerminalTok:
-		return t, false
-
-	default:
-		p.reportf("cannont parse %v, not implemented", tok)
-		return t, false
+		t = p.readList()
+		return p.readOp(t, 0, maxprec), true
 	}
 }
 
-func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
+func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	if lhs.Atom() {
-		str := p.ns.Value(lhs.Key).String()
-		for op := range p.optab.Get(str) {
+		str := p.Scope.Value(lhs.Key).String()
+		for op := range p.OpTab.Get(str) {
 			if maxprec < op.Prec {
 				continue
 			}
@@ -136,7 +158,7 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 				prec--
 				fallthrough
 			case ops.FY:
-				if rhs, ok := p.readTerm(prec); ok {
+				if rhs, ok := p.read(prec); ok {
 					lhs.off = len(p.heap)
 					lhs.Arity = 1
 					p.heap = append(p.heap, rhs)
@@ -150,7 +172,7 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	f := p.skipSpace()
 	var consumed bool
 	if f.Type == lex.FunctTok {
-		for op := range p.optab.Get(f.Symbol.String()) {
+		for op := range p.OpTab.Get(f.Symbol.String()) {
 			if maxprec < op.Prec {
 				continue
 			} else if op.Type == ops.XF || op.Type == ops.XFX || op.Type == ops.XFY {
@@ -166,14 +188,14 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 			}
 
 			if !op.Type.Prefix() && !consumed {
-				p.next()
+				p.advance()
 			}
 
 			prec := op.Prec
 			switch op.Type {
 			case ops.XF, ops.YF:
 				t = Subterm{
-					Key:   p.ns.Name(f.Symbol),
+					Key:   p.Scope.Name(f.Symbol),
 					Arity: 1,
 					off:   len(p.heap),
 				}
@@ -183,9 +205,9 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 				prec--
 				fallthrough
 			case ops.XFY:
-				if rhs, ok := p.readTerm(prec); ok {
+				if rhs, ok := p.read(prec); ok {
 					t = Subterm{
-						Key:   p.ns.Name(f.Symbol),
+						Key:   p.Scope.Name(f.Symbol),
 						Arity: 2,
 						off:   len(p.heap),
 					}
@@ -199,9 +221,9 @@ func (p *parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	return lhs
 }
 
-func (p *parser) readFunctor() (t Subterm) {
-	k := p.ns.Name(p.buf.Symbol)
-	tok := p.next()
+func (p *Parser) readFunctor() (t Subterm) {
+	k := p.Scope.Name(p.buf.Symbol)
+	tok := p.advance()
 	if tok.Type == lex.ParenOpen {
 		args := p.readArgs()
 		t = Subterm{
@@ -218,11 +240,11 @@ func (p *parser) readFunctor() (t Subterm) {
 	return t
 }
 
-func (p *parser) readArgs() (args []Subterm) {
+func (p *Parser) readArgs() (args []Subterm) {
 	args = p.args[:0]
 	for {
-		p.next()
-		arg, ok := p.readTerm(999)
+		p.advance()
+		arg, ok := p.read(999)
 		if ok {
 			args = append(args, arg)
 		}
@@ -230,7 +252,7 @@ func (p *parser) readArgs() (args []Subterm) {
 		case p.buf.Type == lex.FunctTok && p.buf.Symbol.String() == ",":
 			continue
 		case p.buf.Type == lex.ParenClose:
-			p.next()
+			p.advance()
 			return args
 		default:
 			p.reportf("expected ',' or ')', found %v", p.buf)
@@ -238,17 +260,17 @@ func (p *parser) readArgs() (args []Subterm) {
 	}
 }
 
-func (p *parser) readGroup() (t Subterm) {
-	p.next() // consume open paren
-	t, _ = p.readTerm(1200)
+func (p *Parser) readGroup() (t Subterm) {
+	p.advance() // consume open paren
+	t, _ = p.read(1200)
 	if p.buf.Type != lex.ParenClose {
 		p.reportf("expected ')', found %v", p.buf)
 	} else {
-		p.next() // consume close paren
+		p.advance() // consume close paren
 	}
 	return t
 }
 
-func (p *parser) readList() (t Subterm) {
+func (p *Parser) readList() (t Subterm) {
 	panic("lists not implemented")
 }
