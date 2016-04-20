@@ -10,16 +10,15 @@ import (
 )
 
 func ExampleParse() {
-	var input = strings.NewReader("a + b * c - d")
+	var input = strings.NewReader("a + b * c - d.")
 	var optab = ops.Default()
 	var ns = new(scope.Namespace)
 	p := lang.Parse(input, optab, ns)
 	c := p.Next()
 	if p.Errs != nil {
-		fmt.Println("Error:", p.Errs)
-	} else {
-		fmt.Println("Term:", c)
+		panic("don't panic irl")
 	}
+	fmt.Println("Term:", c)
 	// Output:
 	// Term: -(+(a,*(b,c)),d)
 }
