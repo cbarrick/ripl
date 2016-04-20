@@ -9,20 +9,20 @@ import (
 	"github.com/cbarrick/ripl/lang/scope"
 )
 
-// A Parser iterates over the clauses of a Prolog source. Parsing happens
-// place in parrallel with the main thread. The parser pauses after yielding
-// a directive (:-/1), allowing synchronized access to the operator table and
-// namespace.
+// A Parser iterates over the clauses of a Prolog source. Parsing occurs
+// in parrallel with the main thread and may read ahead of the user. The parser
+// pauses after directives (:-/1), providing an opportunity to mutate the parser
+// in the processing of the directive. Parsing resumes on demand.
 type Parser struct {
-	OpTab ops.Table        // operators to parse
+	OpTab *ops.Table       // operators to parse
 	Scope *scope.Namespace // the symbol table, parsing may add new symbols
 	Errs  []error          // any errors encountered are reported here
 
 	lexer <-chan lex.Lexeme // main input
 	ret   chan *Clause      // main output
 	sync  chan struct{}     // used to pause after reading directives
-	heap  []Subterm         // the clause is built onto this slice
 	buf   lex.Lexeme        // the most recently read token
+	heap  []Subterm         // scratch space to build the clause
 	args  [16]Subterm       // scratch space for parsing argument lists
 }
 
@@ -32,7 +32,7 @@ const (
 )
 
 // Parse creates a Parser over r.
-func Parse(r io.Reader, optab ops.Table, sc *scope.Namespace) Parser {
+func Parse(r io.Reader, optab *ops.Table, sc *scope.Namespace) Parser {
 	p := Parser{
 		lexer: lex.Lex(r),
 		ret:   make(chan *Clause, bufferSize),
@@ -59,7 +59,6 @@ func (p *Parser) Next() *Clause {
 
 // run is the entry point for the parser goroutine.
 func (p *Parser) run() {
-	neck := p.Scope.Name(lex.NewFunctor(":-"))
 	for p.buf = range p.lexer {
 		p.heap = p.heap[:0]
 		t, _ := p.read(1200)
@@ -78,7 +77,7 @@ func (p *Parser) run() {
 
 		// pause after directives
 		// this allows the caller to update the operator table, scope, etc
-		if t.Key == neck && t.Arity == 1 {
+		if c.Directive() {
 			p.sync <- struct{}{}
 		}
 	}

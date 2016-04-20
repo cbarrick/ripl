@@ -26,6 +26,13 @@ type Indicator struct {
 	Arity int
 }
 
+// Directive returns true when the clause is a directive.
+func (c Clause) Directive() bool {
+	neck := c.Scope.Neck()
+	root := c.Root()
+	return root.Key == neck && root.Arity == 1
+}
+
 // Root returns the Subterm representing the root of the Clause.
 func (c Clause) Root() Subterm {
 	return c.heap[len(c.heap)-1]
@@ -91,11 +98,11 @@ func (c Clause) args(t Subterm) []Subterm {
 }
 
 // Atomic returns true if the arity of t is 0.
-func (t Subterm) Atomic() bool {
+func (t Indicator) Atomic() bool {
 	return t.Arity == 0
 }
 
 // Atom returns true if t represents an atom.
-func (t Subterm) Atom() bool {
+func (t Indicator) Atom() bool {
 	return t.Arity == 0 && t.Key.Type == types.Funct
 }

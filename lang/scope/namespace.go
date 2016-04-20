@@ -70,6 +70,16 @@ type Namespace struct {
 	// If a Namespace encounters an NSID other than its own, it panics.
 	ID   int
 	heap *treap
+	neck *Key
+}
+
+// Neck returns the Key for the neck ":-" functor.
+func (ns *Namespace) Neck() Key {
+	if ns.neck == nil {
+		k := ns.Name(lex.NewFunctor(":-"))
+		ns.neck = &k
+	}
+	return *ns.neck
 }
 
 // Name ensures that the Symbol is in the namespace, and returns its Key.
