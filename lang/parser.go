@@ -194,11 +194,9 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 			prec := op.Prec
 			switch op.Type {
 			case ops.XF, ops.YF:
-				t = Subterm{
-					Key:   p.Scope.Name(f.Symbol),
-					Arity: 1,
-					off:   len(p.heap),
-				}
+				t.Key = p.Scope.Name(f.Symbol)
+				t.Arity = 1
+				t.off = len(p.heap)
 				p.heap = append(p.heap, lhs)
 				return p.readOp(t, op.Prec, maxprec)
 			case ops.XFX, ops.YFX:
@@ -206,11 +204,9 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 				fallthrough
 			case ops.XFY:
 				if rhs, ok := p.read(prec); ok {
-					t = Subterm{
-						Key:   p.Scope.Name(f.Symbol),
-						Arity: 2,
-						off:   len(p.heap),
-					}
+					t.Key = p.Scope.Name(f.Symbol)
+					t.Arity = 2
+					t.off = len(p.heap)
 					p.heap = append(p.heap, lhs, rhs)
 					return p.readOp(t, op.Prec, maxprec)
 				}
@@ -226,16 +222,14 @@ func (p *Parser) readFunctor() (t Subterm) {
 	tok := p.advance()
 	if tok.Type == lex.ParenOpen {
 		args := p.readArgs()
-		t = Subterm{
-			Key:   k,
-			Arity: len(args),
-			off:   len(p.heap),
-		}
+		t.Key = k
+		t.Arity = len(args)
+		t.off = len(p.heap)
 		for _, arg := range args {
 			p.heap = append(p.heap, arg)
 		}
 	} else {
-		t = Subterm{Key: k}
+		t.Key = k
 	}
 	return t
 }

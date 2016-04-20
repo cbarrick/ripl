@@ -14,12 +14,16 @@ type Clause struct {
 	heap  []Subterm
 }
 
-// A Subterm is a component of a Clause. It contains a Key naming the functor of
-// the term and an arity giving the number of arguments.
+// A Subterm is a component of a Clause.
 type Subterm struct {
+	Indicator
+	off int // position within clause of first argument
+}
+
+// An Indicator is a functor/arity pair.
+type Indicator struct {
 	scope.Key
 	Arity int
-	off   int // position within clause of first argument
 }
 
 // Root returns the Subterm representing the root of the Clause.
