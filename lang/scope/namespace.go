@@ -25,7 +25,7 @@ import (
 //
 // The total ordering of names can be derived from the type, address, and hash.
 type Key struct {
-	NSID int64
+	NSID int
 	Type types.PLType
 	Addr float64
 	Hash int64
@@ -68,8 +68,7 @@ type Namespace struct {
 	// The ID is used to prevent Keys from being used with the wrong Namespace.
 	// The NSID of a Key is equal to the ID of the Namespace which created it.
 	// If a Namespace encounters an NSID other than its own, it panics.
-	ID   int64
-	gen  int
+	ID   int
 	heap *treap
 }
 
