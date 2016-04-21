@@ -11,7 +11,7 @@ func ExampleParser_Parse() {
 	var p lang.Parser
 	var input = strings.NewReader("a + b * c - d.")
 	p.Parse(input)
-	c := p.Next()
+	c, _ := p.Next()
 	if p.Errs != nil {
 		panic("don't panic irl")
 	}

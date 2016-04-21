@@ -22,7 +22,7 @@ type Parser struct {
 	Errs   []error         // any errors encountered are reported here
 
 	lexer <-chan lex.Lexeme // main input
-	ret   chan *Clause      // main output
+	ret   chan Clause       // main output
 	sync  chan struct{}     // used to pause after reading directives
 	buf   lex.Lexeme        // the most recently read token
 	heap  Clause            // scratch space to build the clause
@@ -41,21 +41,21 @@ func (p *Parser) Parse(r io.Reader) {
 		p.OpTab.Default()
 	}
 	p.lexer = lex.Lex(r)
-	p.ret = make(chan *Clause, bufferSize)
+	p.ret = make(chan Clause, bufferSize)
 	p.sync = make(chan struct{})
 	p.heap = make(Clause, heapSize)
 	go p.run()
 }
 
 // Directive returns true if the clause is a ":-/1" directive.
-func (p *Parser) Directive(c *Clause) bool {
+func (p *Parser) Directive(c Clause) bool {
 	neck := p.SymTab.Neck()
 	root := c.Root()
 	return root.Key == neck && root.Arity == 1
 }
 
 // Canonical returns the cannonical representation of the Clause.
-func (p *Parser) Canonical(c *Clause) string {
+func (p *Parser) Canonical(c Clause) string {
 	buf := new(bytes.Buffer)
 	var writeTerm func(Subterm)
 	writeTerm = func(t Subterm) {
@@ -78,13 +78,16 @@ func (p *Parser) Canonical(c *Clause) string {
 }
 
 // Next returns the next clause or nil when the parser finished.
-func (p *Parser) Next() *Clause {
+func (p *Parser) Next() (c Clause, ok bool) {
 	for {
 		select {
-		case <-p.sync:
+		case _, ok = <-p.sync:
+			if !ok {
+				return c, ok
+			}
 			continue
-		case c := <-p.ret:
-			return c
+		case c, ok = <-p.ret:
+			return c, ok
 		}
 	}
 }
@@ -97,7 +100,7 @@ func (p *Parser) run() {
 		p.heap = append(p.heap, t)
 		c := make(Clause, len(p.heap))
 		copy(c, p.heap)
-		p.ret <- &c
+		p.ret <- c
 
 		if p.buf.Type != lex.TerminalTok {
 			p.reportf("operator priority clash")
@@ -105,7 +108,7 @@ func (p *Parser) run() {
 
 		// pause after directives
 		// this allows the caller to update the operator table, scope, etc
-		if p.Directive(&c) {
+		if p.Directive(c) {
 			p.Unlock()
 			p.sync <- struct{}{}
 			p.Lock()
