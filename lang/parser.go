@@ -40,6 +40,7 @@ func (p *Parser) Parse(r io.Reader) {
 	if p.OpTab == nil {
 		p.OpTab.Default()
 	}
+	p.Errs = nil
 	p.lexer = lex.Lex(r)
 	p.ret = make(chan Clause, bufferSize)
 	p.sync = make(chan struct{})
