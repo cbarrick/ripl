@@ -1,18 +1,13 @@
 package lang
 
 import (
-	"bytes"
-
 	"github.com/cbarrick/ripl/lang/scope"
 	"github.com/cbarrick/ripl/lang/types"
 )
 
 // A Clause is a top-level term in Prolog source code.
 // It supports both top-down and bottom-up traversal of its subterms.
-type Clause struct {
-	Scope *scope.Namespace
-	heap  []Subterm
-}
+type Clause []Subterm
 
 // A Subterm is a component of a Clause.
 type Subterm struct {
@@ -26,24 +21,17 @@ type Indicator struct {
 	Arity int
 }
 
-// Directive returns true when the clause is a directive.
-func (c Clause) Directive() bool {
-	neck := c.Scope.Neck()
-	root := c.Root()
-	return root.Key == neck && root.Arity == 1
-}
-
 // Root returns the Subterm representing the root of the Clause.
 func (c Clause) Root() Subterm {
-	return c.heap[len(c.heap)-1]
+	return c[len(c)-1]
 }
 
 // BottomUp returns an iterator over the Subterms of c in bottom-up order.
 func (c Clause) BottomUp() <-chan Subterm {
 	ch := make(chan Subterm, 1)
 	go func(ch chan<- Subterm) {
-		for i := range c.heap {
-			ch <- c.heap[i]
+		for i := range c {
+			ch <- c[i]
 		}
 	}(ch)
 	return ch
@@ -53,7 +41,7 @@ func (c Clause) BottomUp() <-chan Subterm {
 func (c Clause) TopDown() <-chan Subterm {
 	ch := make(chan Subterm, 1)
 	go func(ch chan<- Subterm) {
-		queue := make([]Subterm, 0, len(c.heap))
+		queue := make([]Subterm, 0, len(c))
 		queue = append(queue, c.Root())
 		for len(queue) > 0 {
 			ch <- queue[0]
@@ -63,38 +51,9 @@ func (c Clause) TopDown() <-chan Subterm {
 	return ch
 }
 
-// String returns the cannonical representation of the Clause.
-//
-// NOTE: This function may be removed in the future.
-func (c Clause) String() string {
-	// The only reason Clause embeds a pointer to its namespace is to support
-	// this method. While this method is useful for testing, we may be able to
-	// reduce GC overhead by removing pointers in our structs:
-	// https://github.com/golang/go/wiki/CompilerOptimizations#non-scannable-objects
-	buf := new(bytes.Buffer)
-	var writeTerm func(Subterm)
-	writeTerm = func(t Subterm) {
-		buf.WriteString(c.Scope.Value(t.Key).String())
-		if t.Arity == 0 {
-			return
-		}
-		buf.WriteByte('(')
-		for i, arg := range c.args(t) {
-			writeTerm(arg)
-			if i == t.Arity-1 {
-				buf.WriteByte(')')
-			} else {
-				buf.WriteByte(',')
-			}
-		}
-	}
-	writeTerm(c.Root())
-	return buf.String()
-}
-
 // args returns the arguments of t.
 func (c Clause) args(t Subterm) []Subterm {
-	return c.heap[t.off : t.off+t.Arity]
+	return c[t.off : t.off+t.Arity]
 }
 
 // Atomic returns true if the arity of t is 0.

@@ -5,20 +5,17 @@ import (
 	"strings"
 
 	"github.com/cbarrick/ripl/lang"
-	"github.com/cbarrick/ripl/lang/ops"
-	"github.com/cbarrick/ripl/lang/scope"
 )
 
-func ExampleParse() {
+func ExampleParser_Parse() {
+	var p lang.Parser
 	var input = strings.NewReader("a + b * c - d.")
-	var optab = ops.Default()
-	var ns = new(scope.Namespace)
-	p := lang.Parse(input, optab, ns)
+	p.Parse(input)
 	c := p.Next()
 	if p.Errs != nil {
 		panic("don't panic irl")
 	}
-	fmt.Println("Term:", c)
+	fmt.Println("Term:", p.Canonical(c))
 	// Output:
 	// Term: -(+(a,*(b,c)),d)
 }

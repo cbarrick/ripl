@@ -1,8 +1,10 @@
 package lang
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/cbarrick/ripl/lang/lex"
 	"github.com/cbarrick/ripl/lang/ops"
@@ -14,15 +16,16 @@ import (
 // pauses after directives (:-/1), providing an opportunity to mutate the parser
 // in the processing of the directive. Parsing resumes on demand.
 type Parser struct {
-	OpTab *ops.Table       // operators to parse
-	Scope *scope.Namespace // the symbol table, parsing may add new symbols
-	Errs  []error          // any errors encountered are reported here
+	sync.Mutex
+	OpTab  ops.Table       // operator table, access only
+	SymTab scope.Namespace // the symbol table, parsing may add new symbols
+	Errs   []error         // any errors encountered are reported here
 
 	lexer <-chan lex.Lexeme // main input
 	ret   chan *Clause      // main output
 	sync  chan struct{}     // used to pause after reading directives
 	buf   lex.Lexeme        // the most recently read token
-	heap  []Subterm         // scratch space to build the clause
+	heap  Clause            // scratch space to build the clause
 	args  [16]Subterm       // scratch space for parsing argument lists
 }
 
@@ -31,18 +34,47 @@ const (
 	bufferSize = 4    // initial output buffer size
 )
 
-// Parse creates a Parser over r.
-func Parse(r io.Reader, optab *ops.Table, sc *scope.Namespace) Parser {
-	p := Parser{
-		lexer: lex.Lex(r),
-		ret:   make(chan *Clause, bufferSize),
-		sync:  make(chan struct{}),
-		OpTab: optab,
-		Scope: sc,
-		heap:  make([]Subterm, heapSize),
+// Parse sets the underlying reader of the parser.
+func (p *Parser) Parse(r io.Reader) {
+	p.Lock()
+	if p.OpTab == nil {
+		p.OpTab.Default()
 	}
+	p.lexer = lex.Lex(r)
+	p.ret = make(chan *Clause, bufferSize)
+	p.sync = make(chan struct{})
+	p.heap = make(Clause, heapSize)
 	go p.run()
-	return p
+}
+
+// Directive returns true if the clause is a ":-/1" directive.
+func (p *Parser) Directive(c *Clause) bool {
+	neck := p.SymTab.Neck()
+	root := c.Root()
+	return root.Key == neck && root.Arity == 1
+}
+
+// Canonical returns the cannonical representation of the Clause.
+func (p *Parser) Canonical(c *Clause) string {
+	buf := new(bytes.Buffer)
+	var writeTerm func(Subterm)
+	writeTerm = func(t Subterm) {
+		buf.WriteString(p.SymTab.Value(t.Key).String())
+		if t.Arity == 0 {
+			return
+		}
+		buf.WriteByte('(')
+		for i, arg := range c.args(t) {
+			writeTerm(arg)
+			if i == t.Arity-1 {
+				buf.WriteByte(')')
+			} else {
+				buf.WriteByte(',')
+			}
+		}
+	}
+	writeTerm(c.Root())
+	return buf.String()
 }
 
 // Next returns the next clause or nil when the parser finished.
@@ -63,12 +95,8 @@ func (p *Parser) run() {
 		p.heap = p.heap[:0]
 		t, _ := p.read(1200)
 		p.heap = append(p.heap, t)
-
-		c := Clause{
-			Scope: p.Scope,
-			heap:  make([]Subterm, len(p.heap)),
-		}
-		copy(c.heap, p.heap)
+		c := make(Clause, len(p.heap))
+		copy(c, p.heap)
 		p.ret <- &c
 
 		if p.buf.Type != lex.TerminalTok {
@@ -77,8 +105,10 @@ func (p *Parser) run() {
 
 		// pause after directives
 		// this allows the caller to update the operator table, scope, etc
-		if c.Directive() {
+		if p.Directive(&c) {
+			p.Unlock()
 			p.sync <- struct{}{}
+			p.Lock()
 		}
 	}
 	close(p.ret)
@@ -118,7 +148,7 @@ func (p *Parser) read(maxprec uint) (t Subterm, ok bool) {
 	tok := p.buf
 	switch tok.Type {
 	default:
-		t.Key = p.Scope.Name(tok.Symbol)
+		t.Key = p.SymTab.Name(tok.Symbol)
 		p.advance()
 		return t, true
 
@@ -145,7 +175,7 @@ func (p *Parser) read(maxprec uint) (t Subterm, ok bool) {
 
 func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	if lhs.Atom() {
-		str := p.Scope.Value(lhs.Key).String()
+		str := p.SymTab.Value(lhs.Key).String()
 		for op := range p.OpTab.Get(str) {
 			if maxprec < op.Prec {
 				continue
@@ -193,7 +223,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 			prec := op.Prec
 			switch op.Type {
 			case ops.XF, ops.YF:
-				t.Key = p.Scope.Name(f.Symbol)
+				t.Key = p.SymTab.Name(f.Symbol)
 				t.Arity = 1
 				t.off = len(p.heap)
 				p.heap = append(p.heap, lhs)
@@ -203,7 +233,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 				fallthrough
 			case ops.XFY:
 				if rhs, ok := p.read(prec); ok {
-					t.Key = p.Scope.Name(f.Symbol)
+					t.Key = p.SymTab.Name(f.Symbol)
 					t.Arity = 2
 					t.off = len(p.heap)
 					p.heap = append(p.heap, lhs, rhs)
@@ -217,7 +247,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 }
 
 func (p *Parser) readFunctor() (t Subterm) {
-	k := p.Scope.Name(p.buf.Symbol)
+	k := p.SymTab.Name(p.buf.Symbol)
 	tok := p.advance()
 	if tok.Type == lex.ParenOpen {
 		args := p.readArgs()
