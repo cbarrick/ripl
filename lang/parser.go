@@ -54,6 +54,13 @@ func (p *Parser) Directive(c Clause) bool {
 	return root.Key == neck && root.Arity == 1
 }
 
+// Rule returns true if the clause is a ":-/2" rule.
+func (p *Parser) Rule(c Clause) bool {
+	neck := p.SymTab.Neck()
+	root := c.Root()
+	return root.Key == neck && root.Arity == 2
+}
+
 // Canonical returns the cannonical representation of the Clause.
 func (p *Parser) Canonical(c Clause) string {
 	buf := new(bytes.Buffer)
