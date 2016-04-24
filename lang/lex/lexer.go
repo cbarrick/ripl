@@ -84,6 +84,17 @@ func (tok Lexeme) String() string {
 // --------------------------------------------------
 
 // Norm is the form to which unicode input is normalized.
+//
+// SECURITY: In the NFC and NFD forms, there are look-alike characters  (e.g.
+// 'K' ("\u004B") and 'K' (Kelvin sign "\u212A")). The compatibility normal
+// forms, NFKC and NFKD, will map many visually nearly identical forms to a
+// single value. Note that it will not do so when two symbols look alike, but
+// are really from two different alphabets. For example the Latin 'o', Greek 'ο',
+// and Cyrillic 'о' are still different characters as defined by these forms.
+// See https://blog.golang.org/normalization.
+//
+// REVIEW: Is normalization a security concern at this level?
+// What are the performance characteristics of each normal form?
 const Norm = norm.NFC
 
 // ErrInvalidEnc is the error returned when the input cannot be lexed.
