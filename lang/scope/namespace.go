@@ -8,10 +8,10 @@ import (
 	"github.com/cbarrick/ripl/lang/types"
 )
 
-// A Key names a symbol in a Namespace. Keys contain the minimal information
+// A Name names a symbol in a Namespace. Names contain the minimal information
 // to compare named symbols without accessing the symbol itself.
 //
-// The address of a Key is used to retrieve the named symbol from the Namespace
+// The address of a Name is used to retrieve the named symbol from the Namespace
 // While the semantics of the address are well defined, its meaning is different
 // for Symbols of different Prolog type:
 //
@@ -24,7 +24,7 @@ import (
 // the hash is the value of the integer. For variables, the hash is always zero.
 //
 // The total ordering of names can be derived from the type, address, and hash.
-type Key struct {
+type Name struct {
 	NSID int
 	Type types.PLType
 	Addr float64
@@ -32,8 +32,8 @@ type Key struct {
 }
 
 // Cmp compares named symbols. It is logically equivalent to calling Cmp on the
-// symbols directly. Keys from different namespaces cannot be compared.
-func (k Key) Cmp(c Key) int {
+// symbols directly. Names from different namespaces cannot be compared.
+func (k Name) Cmp(c Name) int {
 	switch {
 	case k.NSID != c.NSID:
 		panic("cannot compare names from different namespaces (NSID mismatch)")
@@ -56,25 +56,25 @@ func (k Key) Cmp(c Key) int {
 	}
 }
 
-// A Namespace assigns Keys to Symbols. Symbols are the literal symbols
-// encountered by the lexer. Keys are handles for Symbols that contain the
-// minimum information for sorting, hashing, and unification. Keys from separate
-// Namespaces cannot be compared.
+// A Namespace assigns Names to Symbols. Symbols are the literal symbols
+// encountered by the lexer. Names are handles for Symbols that contain the
+// minimum information for sorting, hashing, and unification. Names from
+// separate Namespaces cannot be compared.
 //
 // Numeric types are keyed implicitly, and their values can be accessed and
-// mutated directly from the Key. In most cases, this prevents the need to
+// mutated directly from the Name. In most cases, this prevents the need to
 // retrieve Numbers from the namespace.
 type Namespace struct {
-	// The ID is used to prevent Keys from being used with the wrong Namespace.
-	// The NSID of a Key is equal to the ID of the Namespace which created it.
+	// The ID is used to prevent Names from being used with the wrong Namespace.
+	// The NSID of a Name is equal to the ID of the Namespace which created it.
 	// If a Namespace encounters an NSID other than its own, it panics.
 	ID   int
 	heap *treap
-	neck *Key
+	neck *Name
 }
 
-// Neck returns the Key for the neck ":-" functor.
-func (ns *Namespace) Neck() Key {
+// Neck returns the Name for the neck ":-" functor.
+func (ns *Namespace) Neck() Name {
 	if ns.neck == nil {
 		k := ns.Name(lex.NewFunctor(":-"))
 		ns.neck = &k
@@ -82,19 +82,19 @@ func (ns *Namespace) Neck() Key {
 	return *ns.neck
 }
 
-// Name ensures that the Symbol is in the namespace, and returns its Key.
-func (ns *Namespace) Name(val lex.Symbol) Key {
+// Name ensures that the Symbol is in the namespace, and returns its Name.
+func (ns *Namespace) Name(val lex.Symbol) Name {
 	switch val := val.(type) {
 	case *lex.Number:
 		if val.IsInt() {
-			return Key{
+			return Name{
 				NSID: ns.ID,
 				Type: types.Int,
 				Addr: 0,
 				Hash: val.Int64(),
 			}
 		}
-		return Key{
+		return Name{
 			NSID: ns.ID,
 			Type: types.Float,
 			Addr: val.Float64(),
@@ -104,7 +104,7 @@ func (ns *Namespace) Name(val lex.Symbol) Key {
 	case *lex.Functor:
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
-		return Key{
+		return Name{
 			NSID: ns.ID,
 			Type: types.Funct,
 			Addr: addr,
@@ -114,7 +114,7 @@ func (ns *Namespace) Name(val lex.Symbol) Key {
 	case *lex.Variable:
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
-		return Key{
+		return Name{
 			NSID: ns.ID,
 			Type: types.Var,
 			Addr: addr,
@@ -127,7 +127,7 @@ func (ns *Namespace) Name(val lex.Symbol) Key {
 }
 
 // Value retrieves the named Symbol from the namespace.
-func (ns *Namespace) Value(k Key) lex.Symbol {
+func (ns *Namespace) Value(k Name) lex.Symbol {
 	if k.NSID != ns.ID {
 		panic("name used with wrong namespace (NSID mismatch)")
 	}

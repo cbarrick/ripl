@@ -51,14 +51,14 @@ func (p *Parser) Parse(r io.Reader) {
 func (p *Parser) Directive(c Clause) bool {
 	neck := p.SymTab.Neck()
 	root := c.Root()
-	return root.Key == neck && root.Arity == 1
+	return root.Name == neck && root.Arity == 1
 }
 
 // Rule returns true if the clause is a ":-/2" rule.
 func (p *Parser) Rule(c Clause) bool {
 	neck := p.SymTab.Neck()
 	root := c.Root()
-	return root.Key == neck && root.Arity == 2
+	return root.Name == neck && root.Arity == 2
 }
 
 // Canonical returns the cannonical representation of the Clause.
@@ -66,7 +66,7 @@ func (p *Parser) Canonical(c Clause) string {
 	buf := new(bytes.Buffer)
 	var writeTerm func(Subterm)
 	writeTerm = func(t Subterm) {
-		buf.WriteString(p.SymTab.Value(t.Key).String())
+		buf.WriteString(p.SymTab.Value(t.Name).String())
 		if t.Arity == 0 {
 			return
 		}
@@ -158,7 +158,7 @@ func (p *Parser) read(maxprec uint) (t Subterm, ok bool) {
 	tok := p.buf
 	switch tok.Type {
 	default:
-		t.Key = p.SymTab.Name(tok.Symbol)
+		t.Name = p.SymTab.Name(tok.Symbol)
 		p.advance()
 		return t, true
 
@@ -185,7 +185,7 @@ func (p *Parser) read(maxprec uint) (t Subterm, ok bool) {
 
 func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	if lhs.Atom() {
-		str := p.SymTab.Value(lhs.Key).String()
+		str := p.SymTab.Value(lhs.Name).String()
 		for op := range p.OpTab.Get(str) {
 			if maxprec < op.Prec {
 				continue
@@ -233,7 +233,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 			prec := op.Prec
 			switch op.Type {
 			case ops.XF, ops.YF:
-				t.Key = p.SymTab.Name(f.Symbol)
+				t.Name = p.SymTab.Name(f.Symbol)
 				t.Arity = 1
 				t.off = len(p.heap)
 				p.heap = append(p.heap, lhs)
@@ -243,7 +243,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 				fallthrough
 			case ops.XFY:
 				if rhs, ok := p.read(prec); ok {
-					t.Key = p.SymTab.Name(f.Symbol)
+					t.Name = p.SymTab.Name(f.Symbol)
 					t.Arity = 2
 					t.off = len(p.heap)
 					p.heap = append(p.heap, lhs, rhs)
@@ -261,14 +261,14 @@ func (p *Parser) readFunctor() (t Subterm) {
 	tok := p.advance()
 	if tok.Type == lex.ParenOpen {
 		args := p.readArgs()
-		t.Key = k
+		t.Name = k
 		t.Arity = len(args)
 		t.off = len(p.heap)
 		for _, arg := range args {
 			p.heap = append(p.heap, arg)
 		}
 	} else {
-		t.Key = k
+		t.Name = k
 	}
 	return t
 }

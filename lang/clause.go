@@ -17,7 +17,7 @@ type Subterm struct {
 
 // An Indicator is a functor/arity pair.
 type Indicator struct {
-	scope.Key
+	scope.Name
 	Arity int
 }
 
@@ -63,5 +63,5 @@ func (t Indicator) Atomic() bool {
 
 // Atom returns true if t represents an atom.
 func (t Indicator) Atom() bool {
-	return t.Arity == 0 && t.Key.Type == types.Funct
+	return t.Arity == 0 && t.Name.Type == types.Funct
 }
