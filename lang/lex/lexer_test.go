@@ -9,9 +9,10 @@ import (
 )
 
 func BenchmarkLex(b *testing.B) {
-	const input = "a + foo(bar,Baz) * 3.14e30 - d."
-	for i := 0; i < b.N; i++ {
-		for _ = range lex.Lex(strings.NewReader(input)) {
+	var input = strings.NewReader("a + foo(bar,Baz) * 3.14e30 - d.")
+	for n := 0; n < b.N; n++ {
+		input.Seek(0, 0)
+		for _ = range lex.Lex(input) {
 		}
 	}
 }
