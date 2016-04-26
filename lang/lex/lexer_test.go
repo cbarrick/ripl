@@ -38,17 +38,3 @@ func ExampleLex() {
 	// "d" (Functor)
 	// "." (Terminal)
 }
-
-func ExampleLex_eof() {
-	// Terminal Lexemes are inserted at EOF
-	const input = "foo(bar)"
-	for l := range lex.Lex(strings.NewReader(input)) {
-		fmt.Println(&l)
-	}
-	// Output:
-	// "foo" (Functor)
-	// "(" (Paren)
-	// "bar" (Functor)
-	// ")" (Paren)
-	// "" (Terminal)
-}
