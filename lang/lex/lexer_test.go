@@ -18,20 +18,25 @@ func BenchmarkLex(b *testing.B) {
 }
 
 func ExampleLex() {
-	const input = "a + b * c - d."
-	for l := range lex.Lex(strings.NewReader(input)) {
-		fmt.Println(&l)
+	var input = strings.NewReader("a + foo(bar,Baz) * 3.14e30 - d.")
+	for l := range lex.Lex(input) {
+		fmt.Println(l)
 	}
 	// Output:
 	// "a" (Functor)
 	// " " (Whitespace)
 	// "+" (Functor)
 	// " " (Whitespace)
-	// "b" (Functor)
+	// "foo" (Functor)
+	// "(" (Paren)
+	// "bar" (Functor)
+	// "," (Functor)
+	// "Baz" (Variable)
+	// ")" (Paren)
 	// " " (Whitespace)
 	// "*" (Functor)
 	// " " (Whitespace)
-	// "c" (Functor)
+	// "3.14e30" (Number)
 	// " " (Whitespace)
 	// "-" (Functor)
 	// " " (Whitespace)

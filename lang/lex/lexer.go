@@ -5,14 +5,11 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 )
-
-// API
-// --------------------------------------------------
 
 // A Lexeme is a lexical item of Prolog.
 type Lexeme struct {
@@ -21,6 +18,10 @@ type Lexeme struct {
 	Tok  string
 	Line int
 	Col  int
+}
+
+func (tok Lexeme) String() string {
+	return fmt.Sprintf("%q (%v)", tok.Tok, tok.Type)
 }
 
 // A Type classifies types of lexeme.
@@ -44,44 +45,32 @@ const (
 	TerminalTok
 )
 
-// Lex returns all of the tokens of the next clause.
-func Lex(r io.Reader) <-chan Lexeme {
-	ch := make(chan Lexeme, 4)
-	go lex(r, ch)
-	return ch
-}
-
-func (tok Lexeme) String() string {
-	var typ string
-	switch tok.Type {
+func (typ Type) String() string {
+	switch typ {
 	case LexErr:
-		typ = "Lex Error"
+		return "Lex Error"
 	case SpaceTok:
-		typ = "Whitespace"
+		return "Whitespace"
 	case CommentTok:
-		typ = "Comment"
+		return "Comment"
 	case FunctTok:
-		typ = "Functor"
+		return "Functor"
 	case StringTok:
-		typ = "String"
+		return "String"
 	case NumTok:
-		typ = "Number"
+		return "Number"
 	case VarTok:
-		typ = "Variable"
+		return "Variable"
 	case ParenOpen, ParenClose,
 		BracketOpen, BracketClose,
 		BraceOpen, BraceClose:
-		typ = "Paren"
+		return "Paren"
 	case TerminalTok:
-		typ = "Terminal"
+		return "Terminal"
 	default:
 		panic("unknown lexeme type")
 	}
-	return fmt.Sprintf("%q (%v)", tok.Tok, typ)
 }
-
-// State Machine Infrastructure
-// --------------------------------------------------
 
 // Norm is the form to which unicode input is normalized.
 //
@@ -97,313 +86,270 @@ func (tok Lexeme) String() string {
 // What are the performance characteristics of each normal form?
 const Norm = norm.NFC
 
-// ErrInvalidEnc is the error returned when the input cannot be lexed.
-var ErrInvalidEnc = fmt.Errorf("input must be UTF-8")
-
-// A lexer contains the global state for the lexer state-machine.
-type lexer struct {
-	rd    *bufio.Reader
-	buf   *bytes.Buffer // buffer for current token
-	ret   chan<- Lexeme // channel to return lexemes
-	cur   rune          // current rune, not yet in buf
-	depth int           // number of unclosed parens etc.
-	line  int           // zero-based line position of buf
-	col   int           // zero-based column position of buf
-	eof   bool
+// Lex returns all of the tokens of the next clause.
+func Lex(r io.Reader) <-chan Lexeme {
+	ch := make(chan Lexeme, 4)
+	go lex(r, ch)
+	return ch
 }
-
-// lexStates encode the lexer state-machine. lexStates are functions that
-// receive a pointer to the global lexer state, modify that state, and return
-// the next lexState of the machine.
-//
-// The machine halts when a lexState returns nil or panics.
-type lexState func(*lexer) lexState
 
 // lex is the entry point of the lexing goroutine.
-// It drives the state machine.
 func lex(r io.Reader, ret chan<- Lexeme) {
-	l := lexer{
-		rd:  bufio.NewReaderSize(Norm.Reader(r), 4),
-		buf: new(bytes.Buffer),
-		ret: ret,
-	}
+	var depth int
+	line, col := 1, 1
+	sc := bufio.NewScanner(Norm.Reader(r))
+	buf := make([]byte, 256)
+	sc.Buffer(buf, bufio.MaxScanTokenSize)
+	sc.Split(Scanner)
 
-	// At any point, the state machine may exit by panicing.
-	// If so, a LexErr is emitted before closing.
-	defer func() {
-		err := recover()
-		if err, ok := err.(error); ok {
-			if err != nil {
-				ret <- Lexeme{
-					Type: LexErr,
-					Tok:  err.Error(),
-					Line: l.line,
-					Col:  l.col,
-				}
+	for sc.Scan() {
+		var sym Symbol
+		tok := sc.Bytes()
+
+		switch tok[0] {
+		case '(', '[', '{':
+			depth++
+		case '}', ']', ')':
+			depth--
+		}
+
+		typ := identify(tok, depth)
+
+		// compute the change in line/col over this token
+		var dl, dc int
+		for _, r := range tok {
+			if r == '\n' {
+				dl++
+				dc = -col + 1
+			} else {
+				dc++
 			}
 		}
-		close(ret)
-	}()
 
-	// prime the buffer
-	l.read()
-
-	// Under normal circumstances, the state-machine halts by returning nil.
-	state := startState
-	for state != nil {
-		state = state(&l)
-	}
-}
-
-// read consumes the next rune in the stream. The rune is added to the buffer.
-func (l *lexer) read() rune {
-	if l.cur != 0 {
-		l.buf.WriteRune(l.cur)
-	}
-
-	if l.eof {
-		l.cur = 0
-		return 0
-	}
-
-	r, _, err := l.rd.ReadRune()
-	if err == io.EOF {
-		l.eof = true
-	} else if err != nil {
-		panic(err)
-	}
-	if r == '\uFFFD' {
-		panic(ErrInvalidEnc)
-	}
-	l.cur = r
-	return r
-}
-
-// readTo reads from the underlying reader up to the next occurence of delim.
-func (l *lexer) readTo(delim rune) {
-	var r rune
-	for r != delim {
-		r = l.read()
-	}
-}
-
-// accept consumes the next rune if it is one of the given characters or belongs
-// to one of the given unicode ranges. The return value is true if a character
-// is consumed.
-//
-// It will never consume the '!' cut symbol or the ',' comma.
-func (l *lexer) accept(chars string, ranges ...*unicode.RangeTable) (rune, bool) {
-	var r = l.cur
-	if r == '!' || r == ',' {
-		return l.cur, false
-	}
-	if strings.ContainsRune(chars, r) || unicode.In(r, ranges...) {
-		l.read()
-		return l.cur, true
-	}
-	return l.cur, false
-}
-
-// acceptRun consumes as consecutive runes that are one of the given characters
-// or belong to one of the given unicode ranges. The return value is true if any
-// character is consumed.
-//
-// It will never consume the '!' cut symbol or the ',' comma.
-func (l *lexer) acceptRun(chars string, ranges ...*unicode.RangeTable) (r rune, ok bool) {
-	if r, ok = l.accept(chars, ranges...); !ok {
-		return r, false
-	}
-	for ok {
-		r, ok = l.accept(chars, ranges...)
-	}
-	return r, true
-}
-
-// Emit sends a lexeme to the user of the given type and value
-// and flushes the buffer.
-func (l *lexer) emit(typ Type, sym Symbol) {
-	var tok = l.buf.String()
-	var dl, dc int // change in line/column over this token
-	for r := range tok {
-		switch r {
-		case '\r':
-			dc = -l.col
-		case '\n':
-			dl++
-			dc = -l.col
+		switch typ {
+		case FunctTok:
+			if tok[0] == '\'' {
+				var ok bool
+				tok, ok = unquote(tok)
+				if !ok {
+					sym = nil
+					typ = LexErr
+				}
+			} else {
+				sym = Functor(tok)
+			}
+		case StringTok:
+			panic("strings not implemented")
+		case NumTok:
+			sym = NewNumber(string(tok))
+		case VarTok:
+			sym = Variable(tok)
 		default:
-			dc++
+			sym = nil
 		}
+
+		ret <- Lexeme{sym, typ, string(tok), line, col}
+
+		line += dl
+		col += dc
 	}
 
-	if sym != nil {
-		_, err := fmt.Fscan(l.buf, sym)
-		if err != nil {
-			panic(err)
-		}
+	if err := sc.Err(); err != nil {
+		ret <- Lexeme{nil, LexErr, err.Error(), line, col}
 	}
-	l.ret <- Lexeme{sym, typ, tok, l.line + 1, l.col + 1}
 
-	l.line += dl
-	l.col += dc
-	l.buf.Reset()
+	close(ret)
 }
 
-// Prolog Lexer State Machine
-// --------------------------------------------------
-
-// the start state of the machine.
-var startState lexState = any
-
-func any(l *lexer) lexState {
-	r := l.cur
+func identify(tok []byte, depth int) Type {
+	first, _ := utf8.DecodeRune(tok)
 	switch {
-
-	// whitespace and comments
-	case unicode.IsSpace(r):
-		l.acceptRun(" \t\r\n", unicode.Space)
-		l.emit(SpaceTok, nil)
-		return any
-	case r == '%':
-		l.readTo('\n')
-		l.emit(CommentTok, nil)
-		return any
-
-	// cuts, commas, and dots are special cases
-	case r == '!':
-		l.read()
-		l.emit(FunctTok, new(Functor))
-		return any
-	case r == ',':
-		l.read()
-		l.emit(FunctTok, new(Functor))
-		return any
-	case r == '.':
-		l.read()
-		return dot
-
-	// parens, brackets, and braces
-	case strings.ContainsRune("([{}])", r):
-		return paren
-
-	// numbers may be preceeded by a negative
-	case r == '-':
-		l.read()
-		r = l.cur
-		if r < '0' || '9' < r {
-			return symbols
+	case first == '.' && len(tok) == 1 && depth == 0:
+		return TerminalTok
+	case unicode.IsSpace(first):
+		return SpaceTok
+	case first == '%':
+		return CommentTok
+	case first == '(':
+		return ParenOpen
+	case first == ')':
+		return ParenClose
+	case first == '[':
+		return BracketOpen
+	case first == ']':
+		return BracketClose
+	case first == '{':
+		return BraceOpen
+	case first == '}':
+		return BraceClose
+	case first == '-':
+		second, _ := utf8.DecodeRune(tok[1:])
+		if unicode.IsNumber(second) {
+			return NumTok
 		}
-		fallthrough
-	case '0' < r && r < '9':
-		return number
-
-	// quoted tokens may contain escape characters
-	case r == '\'':
-		return quote
-
-	// if it starts with an '_' underscore or an uppercase letter, it's a variable
-	case r == '_' || unicode.IsUpper(r):
-		return capital
-
-	// if it starts with a letter and is not a variable, it's a functor
-	case unicode.IsLetter(r):
-		return lower
-
-	// consecutive symbols are also functors
-	case strings.ContainsRune(ASCIISymbols, r) || unicode.In(r, Symbols...):
-		return symbols
-
-	// auto-insert terminal at eof
-	case l.eof:
-		l.emit(TerminalTok, nil)
-		return nil
-
-	// all other runes are unacceptable
+		return FunctTok
+	case unicode.IsNumber(first):
+		return NumTok
+	case first == '_' || unicode.IsUpper(first):
+		return VarTok
+	case first == '\'' || unicode.In(first, letters...) || unicode.In(first, symbols...):
+		return FunctTok
 	default:
-		panic(ErrInvalidEnc)
+		return LexErr
 	}
 }
 
-func paren(l *lexer) lexState {
-	r := l.cur
-	l.read()
-	switch r {
-	case '(':
-		l.depth++
-		l.emit(ParenOpen, nil)
-	case ')':
-		l.depth--
-		l.emit(ParenClose, nil)
-	case '[':
-		l.depth++
-		l.emit(BracketOpen, nil)
-	case ']':
-		l.depth--
-		l.emit(BracketClose, nil)
-	case '{':
-		l.depth++
-		l.emit(BraceOpen, nil)
-	case '}':
-		l.depth--
-		l.emit(BraceClose, nil)
-	}
-	return any
-}
+// unquote removes the quotes around the token and replaces escape
+// sequences. The token is modified in place, and the new slice
+// is returned. If unquoting fails, the new token will contain
+// an error message.
+func unquote(tok []byte) ([]byte, bool) {
+	// We reuse the token as the buffer.
+	// This is ok: the read index will be after the write index.
+	buf := bytes.NewBuffer(tok)
 
-func dot(l *lexer) lexState {
-	if l.depth == 0 {
-		r := l.cur
-		if r == 0 || unicode.IsSpace(r) {
-			l.emit(TerminalTok, nil)
-			return nil
+	// We know the first byte is a quote
+	// so we start the read index at 1.
+	i := 1
+
+	// Likewise, we know the last byte is a quote
+	// so we don't process it.
+	end := len(tok) - 1
+
+	for i < end {
+		if tok[i] == '\\' {
+			r, skip, ok := unescapeRune(tok[i:])
+			if !ok {
+				tok = []byte("invalid escape sequence")
+				return tok, false
+			}
+			buf.WriteRune(r)
+			i += skip
+		} else {
+			buf.WriteByte(tok[i])
+			i++
 		}
 	}
-	return symbols
+
+	return buf.Bytes(), true
 }
 
-func number(l *lexer) lexState {
-	l.acceptRun("1234567890")
-	_, a := l.accept(".")
-	_, b := l.acceptRun("1234567890")
-	if a && !b {
-		l.emit(NumTok, new(Number))
-		l.buf.WriteByte('.')
-		return dot
+// unescapeRune returns the rune given by the escape sequence at
+// the front of data.
+func unescapeRune(data []byte) (r rune, skip int, ok bool) {
+	if data[0] != '\\' {
+		panic("nothing to unescape")
 	}
-	l.accept("e")
-	l.accept("+-")
-	l.acceptRun("1234567890")
-	l.emit(NumTok, new(Number))
-	return any
-}
 
-func capital(l *lexer) lexState {
-	l.acceptRun(ASCIILetters, Letters...)
-	l.emit(VarTok, new(Variable))
-	return any
-}
+	if len(data) < 2 {
+		return 0, 0, false
+	}
 
-func lower(l *lexer) lexState {
-	l.acceptRun(ASCIILetters, Letters...)
-	l.emit(FunctTok, new(Functor))
-	return any
-}
+	switch data[1] {
+	// basic escapes
+	case 'a':
+		return '\u0007', 2, true
+	case 'b':
+		return '\u0008', 2, true
+	case 't':
+		return '\u0009', 2, true
+	case 'n':
+		return '\u000A', 2, true
+	case 'v':
+		return '\u000B', 2, true
+	case 'f':
+		return '\u000C', 2, true
+	case 'r':
+		return '\u000D', 2, true
+	case '"':
+		return '\u0022', 2, true
+	case '\'':
+		return '\u0027', 2, true
+	case '\\':
+		return '\u005C', 2, true
 
-func symbols(l *lexer) lexState {
-	l.acceptRun(ASCIISymbols, Symbols...)
-	l.emit(FunctTok, new(Functor))
-	return any
-}
-
-func quote(l *lexer) lexState {
-	var r = l.read()
-	for r != '\'' {
-		r = l.read()
-		if r == '\\' {
-			r = l.read()
+	// octal bytes
+	case '0', '1', '2', '3', '4', '5', '6', '7':
+		if len(data) < 4 {
+			return 0, 0, false
 		}
+		r |= rune(data[1]-'0') << 6
+		if '0' <= data[2] && data[2] <= '7' {
+			r |= rune(data[2]-'0') << 3
+		} else {
+			return 0, 0, false
+		}
+		if '0' <= data[3] && data[3] <= '7' {
+			r |= rune(data[3] - '0')
+		} else {
+			return 0, 0, false
+		}
+		return r, 4, true
+
+	// hex bytes
+	case 'x':
+		if len(data) < 4 {
+			return 0, 0, false
+		}
+		d2 := unhex(data[2])
+		d3 := unhex(data[3])
+		r = (d2 << 4) | d3
+		if d2 == utf8.RuneError || d3 == utf8.RuneError {
+			return 0, 0, false
+		}
+		return r, 4, true
+
+	// little code points
+	case 'u':
+		if len(data) < 6 {
+			return 0, 0, false
+		}
+		d2 := unhex(data[2])
+		d3 := unhex(data[3])
+		d4 := unhex(data[4])
+		d5 := unhex(data[5])
+		r = (d2 << 12) | (d3 << 8) | (d4 << 4) | d5
+		if d2 == utf8.RuneError || d3 == utf8.RuneError ||
+			d4 == utf8.RuneError || d5 == utf8.RuneError {
+			return 0, 0, false
+		}
+		return r, 6, true
+
+	// big code points
+	case 'U':
+		if len(data) < 10 {
+			return 0, 0, false
+		}
+		d2 := unhex(data[2])
+		d3 := unhex(data[3])
+		d4 := unhex(data[4])
+		d5 := unhex(data[5])
+		d6 := unhex(data[6])
+		d7 := unhex(data[7])
+		d8 := unhex(data[8])
+		d9 := unhex(data[9])
+		r = (d2 << 28) | (d3 << 24) | (d4 << 20) | (d5 << 16) |
+			(d6 << 12) | (d7 << 8) | (d8 << 4) | d9
+		if d2 == utf8.RuneError || d3 == utf8.RuneError ||
+			d4 == utf8.RuneError || d5 == utf8.RuneError ||
+			d6 == utf8.RuneError || d7 == utf8.RuneError ||
+			d8 == utf8.RuneError || d9 == utf8.RuneError {
+			return 0, 0, false
+		}
+		return r, 10, true
 	}
-	l.read()
-	l.emit(FunctTok, new(Functor))
-	return any
+
+	return 0, 0, false
+}
+
+func unhex(b byte) (r rune) {
+	switch {
+	case '0' <= b && b <= '9':
+		return rune(b - '0')
+	case 'A' <= b && b <= 'F':
+		return rune(b - 'A')
+	case 'a' <= b && b <= 'f':
+		return rune(b - 'a')
+	}
+	return utf8.RuneError
 }

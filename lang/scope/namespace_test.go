@@ -9,8 +9,8 @@ import (
 
 func TestEquality(t *testing.T) {
 	ns := scope.Namespace{}
-	foo := lex.NewFunctor("foo")
-	foo2 := lex.NewFunctor("foo")
+	foo := lex.Functor("foo")
+	foo2 := lex.Functor("foo")
 	n1 := ns.Name(foo)
 	n2 := ns.Name(foo2)
 	if !(n1 == n2 && n1.Cmp(n2) == 0) {
@@ -21,9 +21,9 @@ func TestEquality(t *testing.T) {
 func TestOrder(t *testing.T) {
 	ns := scope.Namespace{}
 
-	v := lex.NewVariable("_1")
+	v := lex.Variable("_1")
 	num := lex.NewNumber("1")
-	funct := lex.NewFunctor("1")
+	funct := lex.Functor("1")
 	n1 := ns.Name(v)
 	n2 := ns.Name(num)
 	n3 := ns.Name(funct)
@@ -37,8 +37,8 @@ func TestOrder(t *testing.T) {
 		t.Error("variables should sort before functors")
 	}
 
-	foo := lex.NewFunctor("foo")
-	bar := lex.NewFunctor("bar")
+	foo := lex.Functor("foo")
+	bar := lex.Functor("bar")
 	n4 := ns.Name(foo)
 	n5 := ns.Name(bar)
 	if n4.Cmp(n5) != +1 || foo.Cmp(bar) != +1 {

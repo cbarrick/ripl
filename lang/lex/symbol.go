@@ -1,10 +1,6 @@
 package lex
 
-import (
-	"fmt"
-
-	"github.com/cbarrick/ripl/lang/types"
-)
+import "github.com/cbarrick/ripl/lang/types"
 
 // Symbol is the common interface for all lexical symbols.
 type Symbol interface {
@@ -12,5 +8,4 @@ type Symbol interface {
 	Hash() int64
 	Cmp(s Symbol) int
 	String() string
-	Scan(state fmt.ScanState, verb rune) error
 }

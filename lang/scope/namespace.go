@@ -76,7 +76,7 @@ type Namespace struct {
 // Neck returns the Name for the neck ":-" functor.
 func (ns *Namespace) Neck() Name {
 	if ns.neck == nil {
-		k := ns.Name(lex.NewFunctor(":-"))
+		k := ns.Name(lex.Functor(":-"))
 		ns.neck = &k
 	}
 	return *ns.neck
@@ -101,7 +101,7 @@ func (ns *Namespace) Name(val lex.Symbol) Name {
 			Hash: val.Hash(),
 		}
 
-	case *lex.Functor:
+	case lex.Functor:
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
 		return Name{
@@ -111,7 +111,7 @@ func (ns *Namespace) Name(val lex.Symbol) Name {
 			Hash: val.Hash(),
 		}
 
-	case *lex.Variable:
+	case lex.Variable:
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
 		return Name{
