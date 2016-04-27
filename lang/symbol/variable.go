@@ -1,17 +1,13 @@
-package lex
+package symbol
 
-import (
-	"strings"
-
-	"github.com/cbarrick/ripl/lang/types"
-)
+import "strings"
 
 // A Variable represents a logical variable.
 type Variable string
 
 // Type returns Var.
-func (v Variable) Type() types.PLType {
-	return types.Var
+func (v Variable) Type() Type {
+	return Var
 }
 
 // String returns the canonical representation of the variable.
@@ -26,7 +22,7 @@ func (v Variable) Hash() int64 {
 
 // Cmp compares a Variable with another Symbol. Variables are compared
 // lexicographically. All other Symbols sort after the Variable.
-func (v Variable) Cmp(s Symbol) int {
+func (v Variable) Cmp(s Interface) int {
 	switch s := s.(type) {
 	case Variable:
 		return strings.Compare(string(v), string(s))

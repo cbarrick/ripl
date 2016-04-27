@@ -1,4 +1,4 @@
-package lex
+package lexer
 
 import (
 	"bufio"
@@ -8,12 +8,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/cbarrick/ripl/lang/symbol"
+
 	"golang.org/x/text/unicode/norm"
 )
 
 // A Lexeme is a lexical item of Prolog.
 type Lexeme struct {
-	Symbol
+	symbol.Interface
 	Type
 	Tok  string
 	Line int
@@ -22,54 +24,6 @@ type Lexeme struct {
 
 func (tok Lexeme) String() string {
 	return fmt.Sprintf("%q (%v)", tok.Tok, tok.Type)
-}
-
-// A Type classifies types of lexeme.
-type Type int
-
-// The types of lexeme.
-const (
-	LexErr Type = iota
-	SpaceTok
-	CommentTok
-	FunctTok
-	StringTok
-	NumTok
-	VarTok
-	ParenOpen
-	ParenClose
-	BracketOpen
-	BracketClose
-	BraceOpen
-	BraceClose
-	TerminalTok
-)
-
-func (typ Type) String() string {
-	switch typ {
-	case LexErr:
-		return "Lex Error"
-	case SpaceTok:
-		return "Whitespace"
-	case CommentTok:
-		return "Comment"
-	case FunctTok:
-		return "Functor"
-	case StringTok:
-		return "String"
-	case NumTok:
-		return "Number"
-	case VarTok:
-		return "Variable"
-	case ParenOpen, ParenClose,
-		BracketOpen, BracketClose,
-		BraceOpen, BraceClose:
-		return "Paren"
-	case TerminalTok:
-		return "Terminal"
-	default:
-		panic("unknown lexeme type")
-	}
 }
 
 // Norm is the form to which unicode input is normalized.
@@ -86,8 +40,8 @@ func (typ Type) String() string {
 // What are the performance characteristics of each normal form?
 const Norm = norm.NFC
 
-// Lex returns all of the tokens of the next clause.
-func Lex(r io.Reader) <-chan Lexeme {
+// Read returns all of the tokens of the input.
+func Read(r io.Reader) <-chan Lexeme {
 	ch := make(chan Lexeme, 4)
 	go lex(r, ch)
 	return ch
@@ -103,7 +57,7 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 	sc.Split(Scanner)
 
 	for sc.Scan() {
-		var sym Symbol
+		var s symbol.Interface
 		tok := sc.Bytes()
 
 		switch tok[0] {
@@ -132,23 +86,23 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 				var ok bool
 				tok, ok = unquote(tok)
 				if !ok {
-					sym = nil
+					s = nil
 					typ = LexErr
 				}
 			} else {
-				sym = Functor(tok)
+				s = symbol.Functor(tok)
 			}
 		case StringTok:
 			panic("strings not implemented")
 		case NumTok:
-			sym = NewNumber(string(tok))
+			s = symbol.NewNumber(string(tok))
 		case VarTok:
-			sym = Variable(tok)
+			s = symbol.Variable(tok)
 		default:
-			sym = nil
+			s = nil
 		}
 
-		ret <- Lexeme{sym, typ, string(tok), line, col}
+		ret <- Lexeme{s, typ, string(tok), line, col}
 
 		line += dl
 		col += dc

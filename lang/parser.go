@@ -6,9 +6,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/cbarrick/ripl/lang/lex"
-	"github.com/cbarrick/ripl/lang/ops"
-	"github.com/cbarrick/ripl/lang/scope"
+	"github.com/cbarrick/ripl/lang/lexer"
+	"github.com/cbarrick/ripl/lang/operator"
+	"github.com/cbarrick/ripl/lang/symbol"
 )
 
 // A Parser iterates over the clauses of a Prolog source. Parsing occurs
@@ -17,16 +17,16 @@ import (
 // in the processing of the directive. Parsing resumes on demand.
 type Parser struct {
 	sync.Mutex
-	OpTab  ops.Table       // operator table, access only
-	SymTab scope.Namespace // the symbol table, parsing may add new symbols
-	Errs   []error         // any errors encountered are reported here
+	OpTab  operator.Table   // operator table, access only
+	SymTab symbol.Namespace // the symbol table, parsing may add new symbols
+	Errs   []error          // any errors encountered are reported here
 
-	lexer <-chan lex.Lexeme // main input
-	ret   chan Clause       // main output
-	sync  chan struct{}     // used to pause after reading directives
-	buf   lex.Lexeme        // the most recently read token
-	heap  Clause            // scratch space to build the clause
-	args  [16]Subterm       // scratch space for parsing argument lists
+	lexer <-chan lexer.Lexeme // main input
+	ret   chan Clause         // main output
+	sync  chan struct{}       // used to pause after reading directives
+	buf   lexer.Lexeme        // the most recently read token
+	heap  Clause              // scratch space to build the clause
+	args  [16]Subterm         // scratch space for parsing argument lists
 }
 
 const (
@@ -41,7 +41,7 @@ func (p *Parser) Parse(r io.Reader) {
 		p.OpTab.Default()
 	}
 	p.Errs = nil
-	p.lexer = lex.Lex(r)
+	p.lexer = lexer.Read(r)
 	p.ret = make(chan Clause, bufferSize)
 	p.sync = make(chan struct{})
 	p.heap = make(Clause, heapSize)
@@ -110,7 +110,7 @@ func (p *Parser) run() {
 		copy(c, p.heap)
 		p.ret <- c
 
-		if p.buf.Type != lex.TerminalTok {
+		if p.buf.Type != lexer.TerminalTok {
 			p.reportf("operator priority clash")
 		}
 
@@ -127,16 +127,16 @@ func (p *Parser) run() {
 }
 
 // next reads the next Lexeme into the buffer.
-func (p *Parser) advance() (tok lex.Lexeme) {
+func (p *Parser) advance() (tok lexer.Lexeme) {
 	tok = <-p.lexer
 	p.buf = tok
 	return tok
 }
 
 // skipSpace advances until the next non-space, non-comment token.
-func (p *Parser) skipSpace() (tok lex.Lexeme) {
+func (p *Parser) skipSpace() (tok lexer.Lexeme) {
 	tok = p.buf
-	for tok.Type == lex.SpaceTok || tok.Type == lex.CommentTok {
+	for tok.Type == lexer.SpaceTok || tok.Type == lexer.CommentTok {
 		tok = <-p.lexer
 	}
 	p.buf = tok
@@ -159,26 +159,26 @@ func (p *Parser) read(maxprec uint) (t Subterm, ok bool) {
 	tok := p.buf
 	switch tok.Type {
 	default:
-		t.Name = p.SymTab.Name(tok.Symbol)
+		t.Name = p.SymTab.Name(tok.Interface)
 		p.advance()
 		return t, true
 
-	case lex.TerminalTok:
+	case lexer.TerminalTok:
 		return t, false
 
-	case lex.LexErr:
+	case lexer.LexErr:
 		p.reportf(tok.String())
 		return t, false
 
-	case lex.FunctTok:
+	case lexer.FunctTok:
 		t = p.readFunctor()
 		return p.readOp(t, 0, maxprec), true
 
-	case lex.ParenOpen:
+	case lexer.ParenOpen:
 		t = p.readGroup()
 		return p.readOp(t, 0, maxprec), true
 
-	case lex.BracketOpen:
+	case lexer.BracketOpen:
 		t = p.readList()
 		return p.readOp(t, 0, maxprec), true
 	}
@@ -194,10 +194,10 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 
 			prec := op.Prec
 			switch op.Type {
-			case ops.FX:
+			case operator.FX:
 				prec--
 				fallthrough
-			case ops.FY:
+			case operator.FY:
 				if rhs, ok := p.read(prec); ok {
 					lhs.off = len(p.heap)
 					lhs.Arity = 1
@@ -211,15 +211,17 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	var t Subterm
 	f := p.skipSpace()
 	var consumed bool
-	if f.Type == lex.FunctTok {
-		for op := range p.OpTab.Get(f.Symbol.String()) {
+	if f.Type == lexer.FunctTok {
+		for op := range p.OpTab.Get(f.Interface.String()) {
 			if maxprec < op.Prec {
 				continue
-			} else if op.Type == ops.XF || op.Type == ops.XFX || op.Type == ops.XFY {
+			} else if op.Type == operator.XF ||
+				op.Type == operator.XFX ||
+				op.Type == operator.XFY {
 				if op.Prec <= lhsprec {
 					continue
 				}
-			} else if op.Type == ops.YF || op.Type == ops.YFX {
+			} else if op.Type == operator.YF || op.Type == operator.YFX {
 				if op.Prec < lhsprec {
 					continue
 				}
@@ -233,18 +235,18 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 
 			prec := op.Prec
 			switch op.Type {
-			case ops.XF, ops.YF:
-				t.Name = p.SymTab.Name(f.Symbol)
+			case operator.XF, operator.YF:
+				t.Name = p.SymTab.Name(f.Interface)
 				t.Arity = 1
 				t.off = len(p.heap)
 				p.heap = append(p.heap, lhs)
 				return p.readOp(t, op.Prec, maxprec)
-			case ops.XFX, ops.YFX:
+			case operator.XFX, operator.YFX:
 				prec--
 				fallthrough
-			case ops.XFY:
+			case operator.XFY:
 				if rhs, ok := p.read(prec); ok {
-					t.Name = p.SymTab.Name(f.Symbol)
+					t.Name = p.SymTab.Name(f.Interface)
 					t.Arity = 2
 					t.off = len(p.heap)
 					p.heap = append(p.heap, lhs, rhs)
@@ -258,9 +260,9 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 }
 
 func (p *Parser) readFunctor() (t Subterm) {
-	k := p.SymTab.Name(p.buf.Symbol)
+	k := p.SymTab.Name(p.buf.Interface)
 	tok := p.advance()
-	if tok.Type == lex.ParenOpen {
+	if tok.Type == lexer.ParenOpen {
 		args := p.readArgs()
 		t.Name = k
 		t.Arity = len(args)
@@ -283,9 +285,9 @@ func (p *Parser) readArgs() (args []Subterm) {
 			args = append(args, arg)
 		}
 		switch {
-		case p.buf.Type == lex.FunctTok && p.buf.Symbol.String() == ",":
+		case p.buf.Type == lexer.FunctTok && p.buf.Interface.String() == ",":
 			continue
-		case p.buf.Type == lex.ParenClose:
+		case p.buf.Type == lexer.ParenClose:
 			p.advance()
 			return args
 		default:
@@ -297,7 +299,7 @@ func (p *Parser) readArgs() (args []Subterm) {
 func (p *Parser) readGroup() (t Subterm) {
 	p.advance() // consume open paren
 	t, _ = p.read(1200)
-	if p.buf.Type != lex.ParenClose {
+	if p.buf.Type != lexer.ParenClose {
 		p.reportf("expected ')', found %v", p.buf)
 	} else {
 		p.advance() // consume close paren

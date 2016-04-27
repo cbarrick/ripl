@@ -1,4 +1,4 @@
-package lex
+package lexer
 
 // ConstError is the type of errors returned by this package.
 type ConstError string

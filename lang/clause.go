@@ -1,9 +1,6 @@
 package lang
 
-import (
-	"github.com/cbarrick/ripl/lang/scope"
-	"github.com/cbarrick/ripl/lang/types"
-)
+import "github.com/cbarrick/ripl/lang/symbol"
 
 // A Clause is a top-level term in Prolog source code.
 // It supports both top-down and bottom-up traversal of its subterms.
@@ -17,7 +14,7 @@ type Subterm struct {
 
 // An Indicator is a functor/arity pair.
 type Indicator struct {
-	scope.Name
+	symbol.Name
 	Arity int
 }
 
@@ -63,5 +60,5 @@ func (t Indicator) Atomic() bool {
 
 // Atom returns true if t represents an atom.
 func (t Indicator) Atom() bool {
-	return t.Arity == 0 && t.Name.Type == types.Funct
+	return t.Arity == 0 && t.Name.Type == symbol.Funct
 }

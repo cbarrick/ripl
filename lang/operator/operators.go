@@ -1,19 +1,19 @@
-package ops
+package operator
 
 // An Op describes the parsing rules for an operator.
 type Op struct {
+	Type        // position and associativity
 	Prec uint   // precedence
-	Type OpType // position and associativity
 	Name string // text representation of the operator
 }
 
-// An OpType classifies types of operators.
+// An Type classifies types of operators.
 // The zero-value is invalid; OpTypes must be initialized.
-type OpType int
+type Type int
 
 // The types of operators
 const (
-	_ OpType = iota
+	_ Type = iota
 
 	FY  // associative prefix
 	FX  // non-associative prefix
@@ -24,7 +24,7 @@ const (
 	XF  // non-associative postfix
 )
 
-func (typ OpType) String() string {
+func (typ Type) String() string {
 	switch typ {
 	case FY:
 		return "fy"
@@ -46,16 +46,16 @@ func (typ OpType) String() string {
 }
 
 // Prefix returns true for prefix OpTypes.
-func (typ OpType) Prefix() bool {
+func (typ Type) Prefix() bool {
 	return typ == FY || typ == FX
 }
 
 // Infix returns true for infix OpTypes.
-func (typ OpType) Infix() bool {
+func (typ Type) Infix() bool {
 	return typ == XFY || typ == YFX || typ == XFX
 }
 
 // Postfix returns true for postfix OpTypes.
-func (typ OpType) Postfix() bool {
+func (typ Type) Postfix() bool {
 	return typ == XF || typ == YF
 }

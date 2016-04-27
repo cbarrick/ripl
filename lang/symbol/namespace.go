@@ -1,11 +1,8 @@
-package scope
+package symbol
 
 import (
 	"fmt"
 	"math/rand"
-
-	"github.com/cbarrick/ripl/lang/lex"
-	"github.com/cbarrick/ripl/lang/types"
 )
 
 // A Name names a symbol in a Namespace. Names contain the minimal information
@@ -26,7 +23,7 @@ import (
 // The total ordering of names can be derived from the type, address, and hash.
 type Name struct {
 	NSID int
-	Type types.PLType
+	Type Type
 	Addr float64
 	Hash int64
 }
@@ -45,7 +42,7 @@ func (k Name) Cmp(c Name) int {
 		return +1
 
 	// Ints are sorted by hash, everything else is sorted by address.
-	case k.Type == types.Int:
+	case k.Type == Int:
 		return int(k.Hash - c.Hash)
 	case k.Addr < c.Addr:
 		return -1
@@ -76,47 +73,47 @@ type Namespace struct {
 // Neck returns the Name for the neck ":-" functor.
 func (ns *Namespace) Neck() Name {
 	if ns.neck == nil {
-		k := ns.Name(lex.Functor(":-"))
+		k := ns.Name(Functor(":-"))
 		ns.neck = &k
 	}
 	return *ns.neck
 }
 
 // Name ensures that the Symbol is in the namespace, and returns its Name.
-func (ns *Namespace) Name(val lex.Symbol) Name {
+func (ns *Namespace) Name(val Interface) Name {
 	switch val := val.(type) {
-	case *lex.Number:
+	case *Number:
 		if val.IsInt() {
 			return Name{
 				NSID: ns.ID,
-				Type: types.Int,
+				Type: Int,
 				Addr: 0,
 				Hash: val.Int64(),
 			}
 		}
 		return Name{
 			NSID: ns.ID,
-			Type: types.Float,
+			Type: Float,
 			Addr: val.Float64(),
 			Hash: val.Hash(),
 		}
 
-	case lex.Functor:
+	case Functor:
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
 		return Name{
 			NSID: ns.ID,
-			Type: types.Funct,
+			Type: Funct,
 			Addr: addr,
 			Hash: val.Hash(),
 		}
 
-	case lex.Variable:
+	case Variable:
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
 		return Name{
 			NSID: ns.ID,
-			Type: types.Var,
+			Type: Var,
 			Addr: addr,
 			Hash: val.Hash(),
 		}
@@ -127,22 +124,22 @@ func (ns *Namespace) Name(val lex.Symbol) Name {
 }
 
 // Value retrieves the named Symbol from the namespace.
-func (ns *Namespace) Value(k Name) lex.Symbol {
+func (ns *Namespace) Value(k Name) Interface {
 	if k.NSID != ns.ID {
 		panic("name used with wrong namespace (NSID mismatch)")
 	}
 	switch k.Type {
-	case types.Int:
-		val := new(lex.Number)
+	case Int:
+		val := new(Number)
 		val.SetInt64(k.Hash)
 		return val
-	case types.Float:
-		val := new(lex.Number)
+	case Float:
+		val := new(Number)
 		val.SetFloat64(k.Addr)
 		return val
-	case types.Funct:
+	case Funct:
 		return ns.heap.get(k.Addr)
-	case types.Var:
+	case Var:
 		return ns.heap.get(k.Addr)
 	default:
 		panic(fmt.Errorf("unknown Prolog type for key: %v", k))
@@ -158,7 +155,7 @@ func (ns *Namespace) Value(k Name) lex.Symbol {
 //
 // This treap provides a positive float64 address key for each of their nodes.
 type treap struct {
-	lex.Symbol
+	Interface
 	addr        float64
 	priority    int64
 	lo, hi      float64
@@ -166,13 +163,13 @@ type treap struct {
 }
 
 // get retrieves a symbol from the treap, given its address.
-func (t *treap) get(addr float64) lex.Symbol {
+func (t *treap) get(addr float64) Interface {
 	if t == nil {
 		return nil
 	}
 	switch {
 	case addr == t.addr:
-		return t.Symbol
+		return t.Interface
 	case addr < t.addr:
 		return t.left.get(addr)
 	default:
@@ -182,18 +179,18 @@ func (t *treap) get(addr float64) lex.Symbol {
 
 // address returns the address of a symbol. If the symbol does not yet have an
 // address, it is retained and a suitable address is generated.
-func (t *treap) address(val lex.Symbol) (addr float64, root *treap) {
+func (t *treap) address(val Interface) (addr float64, root *treap) {
 	if t == nil {
 		return 1, &treap{
-			Symbol:   val,
-			addr:     1,
-			priority: rand.Int63(),
-			lo:       0,
-			hi:       2,
+			Interface: val,
+			addr:      1,
+			priority:  rand.Int63(),
+			lo:        0,
+			hi:        2,
 		}
 	}
 
-	switch val.Cmp(t.Symbol) {
+	switch val.Cmp(t.Interface) {
 	case 0:
 		return t.addr, t
 
@@ -204,11 +201,11 @@ func (t *treap) address(val lex.Symbol) (addr float64, root *treap) {
 			*root = *t
 			addr = t.addr/2 + t.lo/2
 			left = &treap{
-				Symbol:   val,
-				addr:     addr,
-				lo:       root.lo,
-				hi:       root.addr,
-				priority: rand.Int63(),
+				Interface: val,
+				addr:      addr,
+				lo:        root.lo,
+				hi:        root.addr,
+				priority:  rand.Int63(),
 			}
 			root.left = left
 		} else {
@@ -233,11 +230,11 @@ func (t *treap) address(val lex.Symbol) (addr float64, root *treap) {
 			*root = *t
 			addr = t.addr/2 + t.hi/2
 			right = &treap{
-				Symbol:   val,
-				addr:     addr,
-				lo:       root.addr,
-				hi:       root.hi,
-				priority: rand.Int63(),
+				Interface: val,
+				addr:      addr,
+				lo:        root.addr,
+				hi:        root.hi,
+				priority:  rand.Int63(),
 			}
 			root.right = right
 		} else {
@@ -263,5 +260,5 @@ func (t *treap) String() string {
 	if t == nil {
 		return "_"
 	}
-	return fmt.Sprintf("(%v.%v %v %v)", t.Symbol, t.priority, t.left, t.right)
+	return fmt.Sprintf("(%v.%v %v %v)", t.Interface, t.priority, t.left, t.right)
 }
