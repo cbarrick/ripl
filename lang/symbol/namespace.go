@@ -22,7 +22,6 @@ import (
 //
 // The total ordering of names can be derived from the type, address, and hash.
 type Name struct {
-	NSID int
 	Type Type
 	Addr float64
 	Hash int64
@@ -32,10 +31,7 @@ type Name struct {
 // symbols directly. Names from different namespaces cannot be compared.
 func (k Name) Cmp(c Name) int {
 	switch {
-	case k.NSID != c.NSID:
-		panic("cannot compare names from different namespaces (NSID mismatch)")
-
-	// PLTypes are enumerated in reverse sort order.
+	// Prolog Types are enumerated in reverse sort order.
 	case c.Type < k.Type:
 		return -1
 	case k.Type < c.Type:
@@ -62,10 +58,6 @@ func (k Name) Cmp(c Name) int {
 // mutated directly from the Name. In most cases, this prevents the need to
 // retrieve Numbers from the namespace.
 type Namespace struct {
-	// The ID is used to prevent Names from being used with the wrong Namespace.
-	// The NSID of a Name is equal to the ID of the Namespace which created it.
-	// If a Namespace encounters an NSID other than its own, it panics.
-	ID   int
 	heap *treap
 	neck *Name
 }
@@ -85,14 +77,12 @@ func (ns *Namespace) Name(val Interface) Name {
 	case *Number:
 		if val.IsInt() {
 			return Name{
-				NSID: ns.ID,
 				Type: Int,
 				Addr: 0,
 				Hash: val.Int64(),
 			}
 		}
 		return Name{
-			NSID: ns.ID,
 			Type: Float,
 			Addr: val.Float64(),
 			Hash: val.Hash(),
@@ -102,7 +92,6 @@ func (ns *Namespace) Name(val Interface) Name {
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
 		return Name{
-			NSID: ns.ID,
 			Type: Funct,
 			Addr: addr,
 			Hash: val.Hash(),
@@ -112,7 +101,6 @@ func (ns *Namespace) Name(val Interface) Name {
 		var addr float64
 		addr, ns.heap = ns.heap.address(val)
 		return Name{
-			NSID: ns.ID,
 			Type: Var,
 			Addr: addr,
 			Hash: val.Hash(),
@@ -125,9 +113,6 @@ func (ns *Namespace) Name(val Interface) Name {
 
 // Value retrieves the named Symbol from the namespace.
 func (ns *Namespace) Value(k Name) Interface {
-	if k.NSID != ns.ID {
-		panic("name used with wrong namespace (NSID mismatch)")
-	}
 	switch k.Type {
 	case Int:
 		val := new(Number)
