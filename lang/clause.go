@@ -30,6 +30,7 @@ func (c Clause) BottomUp() <-chan Subterm {
 		for i := range c {
 			ch <- c[i]
 		}
+		close(ch)
 	}(ch)
 	return ch
 }
@@ -44,6 +45,7 @@ func (c Clause) TopDown() <-chan Subterm {
 			ch <- queue[0]
 			queue = append(queue[1:], c.args(queue[0])...)
 		}
+		close(ch)
 	}(ch)
 	return ch
 }
