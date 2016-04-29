@@ -17,9 +17,9 @@ import (
 // in the processing of the directive. Parsing resumes on demand.
 type Parser struct {
 	sync.Mutex
-	OpTab  operator.Table   // operator table, access only
-	SymTab symbol.Namespace // the symbol table, parsing may add new symbols
-	Errs   []error          // any errors encountered are reported here
+	OpTab  *operator.Table   // operator table, access only
+	SymTab *symbol.Namespace // the symbol table, parsing may add new symbols
+	Errs   []error           // any errors encountered are reported here
 
 	lexer <-chan lexer.Lexeme // main input
 	ret   chan Clause         // main output
@@ -36,10 +36,6 @@ const (
 
 // Parse sets the underlying reader of the parser.
 func (p *Parser) Parse(r io.Reader) {
-	p.Lock()
-	if p.OpTab == nil {
-		p.OpTab.Default()
-	}
 	p.Errs = nil
 	p.lexer = lexer.Read(r)
 	p.ret = make(chan Clause, bufferSize)
@@ -102,6 +98,7 @@ func (p *Parser) Next() (c Clause, ok bool) {
 
 // run is the entry point for the parser goroutine.
 func (p *Parser) run() {
+	p.Lock()
 	for p.buf = range p.lexer {
 		p.heap = p.heap[:0]
 		t, _ := p.read(1200)
@@ -122,6 +119,7 @@ func (p *Parser) run() {
 			p.Lock()
 		}
 	}
+	p.Unlock()
 	close(p.ret)
 	close(p.sync)
 }
