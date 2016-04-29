@@ -157,7 +157,7 @@ func (p *Parser) read(maxprec uint) (t Subterm, ok bool) {
 	tok := p.buf
 	switch tok.Type {
 	default:
-		t.Name = p.SymTab.Name(tok.Interface)
+		t.Name = p.SymTab.Name(tok.Symbol)
 		p.advance()
 		return t, true
 
@@ -210,7 +210,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 	f := p.skipSpace()
 	var consumed bool
 	if f.Type == lexer.FunctTok {
-		for op := range p.OpTab.Get(f.Interface.String()) {
+		for op := range p.OpTab.Get(f.Symbol.String()) {
 			if maxprec < op.Prec {
 				continue
 			} else if op.Type == operator.XF ||
@@ -234,7 +234,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 			prec := op.Prec
 			switch op.Type {
 			case operator.XF, operator.YF:
-				t.Name = p.SymTab.Name(f.Interface)
+				t.Name = p.SymTab.Name(f.Symbol)
 				t.Arity = 1
 				t.off = len(p.heap)
 				p.heap = append(p.heap, lhs)
@@ -244,7 +244,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 				fallthrough
 			case operator.XFY:
 				if rhs, ok := p.read(prec); ok {
-					t.Name = p.SymTab.Name(f.Interface)
+					t.Name = p.SymTab.Name(f.Symbol)
 					t.Arity = 2
 					t.off = len(p.heap)
 					p.heap = append(p.heap, lhs, rhs)
@@ -258,7 +258,7 @@ func (p *Parser) readOp(lhs Subterm, lhsprec uint, maxprec uint) Subterm {
 }
 
 func (p *Parser) readFunctor() (t Subterm) {
-	k := p.SymTab.Name(p.buf.Interface)
+	k := p.SymTab.Name(p.buf.Symbol)
 	tok := p.advance()
 	if tok.Type == lexer.ParenOpen {
 		args := p.readArgs()
@@ -283,7 +283,7 @@ func (p *Parser) readArgs() (args []Subterm) {
 			args = append(args, arg)
 		}
 		switch {
-		case p.buf.Type == lexer.FunctTok && p.buf.Interface.String() == ",":
+		case p.buf.Type == lexer.FunctTok && p.buf.Symbol.String() == ",":
 			continue
 		case p.buf.Type == lexer.ParenClose:
 			p.advance()

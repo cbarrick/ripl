@@ -15,7 +15,7 @@ import (
 
 // A Lexeme is a lexical item of Prolog.
 type Lexeme struct {
-	symbol.Interface
+	symbol.Symbol
 	Type
 	Tok  string
 	Line int
@@ -57,7 +57,7 @@ func lex(r io.Reader, ret chan<- Lexeme) {
 	sc.Split(Scanner)
 
 	for sc.Scan() {
-		var s symbol.Interface
+		var s symbol.Symbol
 		tok := sc.Bytes()
 
 		switch tok[0] {

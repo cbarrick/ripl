@@ -65,7 +65,7 @@ func (n *Number) Num() *big.Int {
 
 // Cmp compares a Number with another symbol. Numbers are sorted by value.
 // Variables sort before Numbers, and everything else sorts after Numbers.
-func (n *Number) Cmp(s Interface) int {
+func (n *Number) Cmp(s Symbol) int {
 	switch s := s.(type) {
 	case *Number:
 		return (*big.Rat)(n).Cmp((*big.Rat)(s))

@@ -27,7 +27,7 @@ func (f Functor) Hash() int64 {
 
 // Cmp compares a Functor with another Symbol. Functors are compared
 // lexicographically. All other Symbols sort before the Functor.
-func (f Functor) Cmp(s Interface) int {
+func (f Functor) Cmp(s Symbol) int {
 	switch s := s.(type) {
 	case Functor:
 		return strings.Compare(string(f), string(s))

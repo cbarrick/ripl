@@ -22,7 +22,7 @@ func (v Variable) Hash() int64 {
 
 // Cmp compares a Variable with another Symbol. Variables are compared
 // lexicographically. All other Symbols sort after the Variable.
-func (v Variable) Cmp(s Interface) int {
+func (v Variable) Cmp(s Symbol) int {
 	switch s := s.(type) {
 	case Variable:
 		return strings.Compare(string(v), string(s))

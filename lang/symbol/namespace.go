@@ -72,7 +72,7 @@ func (ns *Namespace) Neck() Name {
 }
 
 // Name ensures that the Symbol is in the namespace, and returns its Name.
-func (ns *Namespace) Name(val Interface) Name {
+func (ns *Namespace) Name(val Symbol) Name {
 	switch val := val.(type) {
 	case *Number:
 		if val.IsInt() {
@@ -112,7 +112,7 @@ func (ns *Namespace) Name(val Interface) Name {
 }
 
 // Value retrieves the named Symbol from the namespace.
-func (ns *Namespace) Value(k Name) Interface {
+func (ns *Namespace) Value(k Name) Symbol {
 	switch k.Type {
 	case Int:
 		val := new(Number)
@@ -140,7 +140,7 @@ func (ns *Namespace) Value(k Name) Interface {
 //
 // This treap provides a positive float64 address key for each of their nodes.
 type treap struct {
-	Interface
+	Symbol
 	addr        float64
 	priority    int64
 	lo, hi      float64
@@ -148,13 +148,13 @@ type treap struct {
 }
 
 // get retrieves a symbol from the treap, given its address.
-func (t *treap) get(addr float64) Interface {
+func (t *treap) get(addr float64) Symbol {
 	if t == nil {
 		return nil
 	}
 	switch {
 	case addr == t.addr:
-		return t.Interface
+		return t.Symbol
 	case addr < t.addr:
 		return t.left.get(addr)
 	default:
@@ -164,18 +164,18 @@ func (t *treap) get(addr float64) Interface {
 
 // address returns the address of a symbol. If the symbol does not yet have an
 // address, it is retained and a suitable address is generated.
-func (t *treap) address(val Interface) (addr float64, root *treap) {
+func (t *treap) address(val Symbol) (addr float64, root *treap) {
 	if t == nil {
 		return 1, &treap{
-			Interface: val,
-			addr:      1,
-			priority:  rand.Int63(),
-			lo:        0,
-			hi:        2,
+			Symbol:   val,
+			addr:     1,
+			priority: rand.Int63(),
+			lo:       0,
+			hi:       2,
 		}
 	}
 
-	switch cmp := val.Cmp(t.Interface); {
+	switch cmp := val.Cmp(t.Symbol); {
 	case cmp == 0:
 		return t.addr, t
 
@@ -186,11 +186,11 @@ func (t *treap) address(val Interface) (addr float64, root *treap) {
 			*root = *t
 			addr = t.addr/2 + t.lo/2
 			left = &treap{
-				Interface: val,
-				addr:      addr,
-				lo:        root.lo,
-				hi:        root.addr,
-				priority:  rand.Int63(),
+				Symbol:   val,
+				addr:     addr,
+				lo:       root.lo,
+				hi:       root.addr,
+				priority: rand.Int63(),
 			}
 			root.left = left
 		} else {
@@ -216,11 +216,11 @@ func (t *treap) address(val Interface) (addr float64, root *treap) {
 			*root = *t
 			addr = t.addr/2 + t.hi/2
 			right = &treap{
-				Interface: val,
-				addr:      addr,
-				lo:        root.addr,
-				hi:        root.hi,
-				priority:  rand.Int63(),
+				Symbol:   val,
+				addr:     addr,
+				lo:       root.addr,
+				hi:       root.hi,
+				priority: rand.Int63(),
 			}
 			root.right = right
 		} else {
@@ -247,5 +247,5 @@ func (t *treap) String() string {
 	if t == nil {
 		return "_"
 	}
-	return fmt.Sprintf("(%v.%v %v %v)", t.Interface, t.priority, t.left, t.right)
+	return fmt.Sprintf("(%v.%v %v %v)", t.Symbol, t.priority, t.left, t.right)
 }
