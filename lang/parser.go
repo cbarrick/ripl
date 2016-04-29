@@ -145,7 +145,7 @@ func (p *Parser) skipSpace() (tok lexer.Lexeme) {
 // The line and column of the current token are prepended to the message.
 func (p *Parser) reportf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	err := fmt.Errorf("%d:%d: %s", p.buf.Line+1, p.buf.Col, msg)
+	err := fmt.Errorf("%d:%d: %s", p.buf.Line, p.buf.Col, msg)
 	p.Errs = append(p.Errs, err)
 }
 
