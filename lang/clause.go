@@ -55,12 +55,12 @@ func (c Clause) args(t Subterm) []Subterm {
 	return c[t.off : t.off+t.Arity]
 }
 
-// Atomic returns true if the arity of t is 0.
-func (t Indicator) Atomic() bool {
-	return t.Arity == 0
+// Atomic returns true if the arity of id is 0.
+func (id Indicator) Atomic() bool {
+	return id.Arity == 0
 }
 
-// Atom returns true if t represents an atom.
-func (t Indicator) Atom() bool {
-	return t.Arity == 0 && t.Name.Type == symbol.Funct
+// Atom returns true if id represents an atom.
+func (id Indicator) Atom() bool {
+	return id.Arity == 0 && id.Name.Type == symbol.Funct
 }
