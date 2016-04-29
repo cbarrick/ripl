@@ -5,9 +5,11 @@ import "sort"
 // An Table is a collection of operators for the parser.
 type Table []Op
 
-// Default sets the table to the default set.
-func (t *Table) Default() {
-	*t = Table(defaultOps[:])
+// Default returns a new Table containing the default operators.
+func Default() (t Table) {
+	t = make(Table, len(defaultOps))
+	copy(t, defaultOps[:])
+	return t
 }
 
 // Get returns a channel yielding all operators with the given name.
