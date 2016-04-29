@@ -175,11 +175,11 @@ func (t *treap) address(val Interface) (addr float64, root *treap) {
 		}
 	}
 
-	switch val.Cmp(t.Interface) {
-	case 0:
+	switch cmp := val.Cmp(t.Interface); {
+	case cmp == 0:
 		return t.addr, t
 
-	case -1:
+	case cmp < 0:
 		var left *treap
 		if t.left == nil {
 			root = new(treap)
@@ -207,8 +207,9 @@ func (t *treap) address(val Interface) (addr float64, root *treap) {
 			left.hi, root.lo = root.hi, left.addr
 			root = left
 		}
+		return addr, root
 
-	case +1:
+	case cmp > 0:
 		var right *treap
 		if t.right == nil {
 			root = new(treap)
@@ -236,9 +237,10 @@ func (t *treap) address(val Interface) (addr float64, root *treap) {
 			right.lo, root.hi = root.lo, right.addr
 			root = right
 		}
+		return addr, root
 	}
 
-	return addr, root
+	panic("unreachable")
 }
 
 func (t *treap) String() string {

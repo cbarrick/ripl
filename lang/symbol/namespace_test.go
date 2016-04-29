@@ -6,8 +6,19 @@ import (
 	"github.com/cbarrick/ripl/lang/symbol"
 )
 
+func TestNamespace(t *testing.T) {
+	var ns symbol.Namespace
+	foo := symbol.Functor("foo")
+	bar := symbol.Variable("Bar")
+	nfoo := ns.Name(foo)
+	nbar := ns.Name(bar)
+	if ns.Value(nfoo) != foo || ns.Value(nbar) != bar {
+		t.Error("the value of a name must match the original symbol")
+	}
+}
+
 func TestEquality(t *testing.T) {
-	ns := symbol.Namespace{}
+	var ns symbol.Namespace
 	foo := symbol.Functor("foo")
 	foo2 := symbol.Functor("foo")
 	n1 := ns.Name(foo)
@@ -18,7 +29,7 @@ func TestEquality(t *testing.T) {
 }
 
 func TestOrder(t *testing.T) {
-	ns := symbol.Namespace{}
+	var ns symbol.Namespace
 
 	v := symbol.Variable("_1")
 	num := symbol.NewNumber("1")
