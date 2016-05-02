@@ -78,6 +78,13 @@ type treap struct {
 	left, right *treap
 }
 
+// The base controls how addresses are distributed. Addresses generated at the
+// far right/left of the tree are set to their neighbor multiplied/divided by
+// the base. Because of the way float64s are represented, a base of 2 results
+// in an address space with very little entropy. A base of 31 appears to have
+// better entropy to support hashing in the database.
+const base = 31
+
 // get retrieves a symbol from the treap, given its address.
 func (t *treap) get(addr Name) Symbol {
 	if t == nil {
@@ -115,14 +122,8 @@ func (t *treap) address(val Symbol) (addr Name, root *treap) {
 		if t.left == nil {
 			root = new(treap)
 			*root = *t
-			addr = t.addr/2 + t.lo/2
-			left = &treap{
-				Symbol:   val,
-				addr:     addr,
-				lo:       root.lo,
-				hi:       root.addr,
-				priority: rand.Int63(),
-			}
+			left = newTreapLeft(t, val)
+			addr = left.addr
 			root.left = left
 		} else {
 			addr, left = t.left.address(val)
@@ -145,14 +146,8 @@ func (t *treap) address(val Symbol) (addr Name, root *treap) {
 		if t.right == nil {
 			root = new(treap)
 			*root = *t
-			addr = t.addr/2 + t.hi/2
-			right = &treap{
-				Symbol:   val,
-				addr:     addr,
-				lo:       root.addr,
-				hi:       root.hi,
-				priority: rand.Int63(),
-			}
+			right = newTreapRight(t, val)
+			addr = right.addr
 			root.right = right
 		} else {
 			addr, right = t.right.address(val)
@@ -172,6 +167,38 @@ func (t *treap) address(val Symbol) (addr Name, root *treap) {
 	}
 
 	panic("unreachable")
+}
+
+func newTreapRight(t *treap, val Symbol) *treap {
+	var addr Name
+	if t.hi == 0 {
+		addr = t.addr * base
+	} else {
+		addr = t.addr/2 + t.hi/2
+	}
+	return &treap{
+		Symbol:   val,
+		addr:     addr,
+		lo:       t.addr,
+		hi:       t.hi,
+		priority: rand.Int63(),
+	}
+}
+
+func newTreapLeft(t *treap, val Symbol) *treap {
+	var addr Name
+	if t.lo == 0 {
+		addr = t.addr / base
+	} else {
+		addr = t.addr/2 + t.lo/2
+	}
+	return &treap{
+		Symbol:   val,
+		addr:     addr,
+		lo:       t.lo,
+		hi:       t.addr,
+		priority: rand.Int63(),
+	}
 }
 
 func (t *treap) String() string {
