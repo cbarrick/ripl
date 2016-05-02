@@ -27,7 +27,6 @@ func (v Variable) Cmp(s Symbol) int {
 	case Variable:
 		return strings.Compare(string(v), string(s))
 	default:
-		// PLTypes are enumerated in reverse sort order.
-		return int(s.Type() - v.Type())
+		return int(v.Type() - s.Type())
 	}
 }

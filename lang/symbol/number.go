@@ -70,8 +70,7 @@ func (n *Number) Cmp(s Symbol) int {
 	case *Number:
 		return (*big.Rat)(n).Cmp((*big.Rat)(s))
 	default:
-		// PLTypes are enumerated in reverse sort order.
-		return int(s.Type() - n.Type())
+		return int(n.Type() - s.Type())
 	}
 }
 

@@ -6,13 +6,11 @@ import (
 	"github.com/cbarrick/ripl/lang/symbol"
 )
 
-func TestNamespace(t *testing.T) {
+func TestSimple(t *testing.T) {
 	var ns symbol.Namespace
 	foo := symbol.Functor("foo")
-	bar := symbol.Variable("Bar")
 	nfoo := ns.Name(foo)
-	nbar := ns.Name(bar)
-	if ns.Value(nfoo) != foo || ns.Value(nbar) != bar {
+	if ns.Value(nfoo) != foo {
 		t.Error("the value of a name must match the original symbol")
 	}
 }
@@ -51,18 +49,7 @@ func TestOrder(t *testing.T) {
 	bar := symbol.Functor("bar")
 	n4 := ns.Name(foo)
 	n5 := ns.Name(bar)
-	if n4.Cmp(n5) != +1 || foo.Cmp(bar) != +1 {
+	if !(0 < n4.Cmp(n5) && 0 < foo.Cmp(bar)) {
 		t.Error("'foo' should sort after 'bar'")
-	}
-
-	one := symbol.NewNumber("1")
-	two := symbol.NewNumber("2")
-	n6 := ns.Name(one)
-	n7 := ns.Name(two)
-	if !(n6.Cmp(n7) < 0 && one.Cmp(two) < 0) {
-		t.Log(n6)
-		t.Log(n7)
-		t.Log(n6.Cmp(n7))
-		t.Error("1 should sort before 2")
 	}
 }

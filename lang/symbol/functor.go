@@ -32,7 +32,6 @@ func (f Functor) Cmp(s Symbol) int {
 	case Functor:
 		return strings.Compare(string(f), string(s))
 	default:
-		// PLTypes are enumerated in reverse sort order.
-		return int(s.Type() - f.Type())
+		return int(f.Type() - s.Type())
 	}
 }

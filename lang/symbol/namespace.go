@@ -5,49 +5,27 @@ import (
 	"math/rand"
 )
 
-// A Name names a symbol in a Namespace. Names contain the minimal information
-// to compare named symbols without accessing the symbol itself.
-//
-// The address of a Name is used to retrieve the named symbol from the Namespace
-// While the semantics of the address are well defined, its meaning is different
-// for Symbols of different Prolog type:
-//
-// For functors, the address represents a lexicographic ordering of functors in
-// the same namespace. For floats, the address is the value of the float. For
-// integers, the address is always 0. And for variables, the address represents
-// an arbitrary total ordering of variables.
-//
-// The hash of a name is equal to the hash of the named symbol. For integers,
-// the hash is the value of the integer. For variables, the hash is always zero.
-//
-// The total ordering of names can be derived from the type, address, and hash.
-type Name struct {
-	Type Type
-	Addr float64
-	Hash int64
+// A Name is assigned to each symbol in a Namespace. Functors are assigned
+// unique names, and all other symbols are assigned a name reflecting the
+// Prolog type of the symbol. The ordering of names reflects the relative order
+// of symbols in the same namespace.
+type Name float64
+
+// Cmp compares names. Names representing symbols of different types can always be compared.
+func (k Name) Cmp(c Name) float64 {
+	return float64(k - c)
 }
 
-// Cmp compares named symbols. It is logically equivalent to calling Cmp on the
-// symbols directly. Names from different namespaces cannot be compared.
-func (k Name) Cmp(c Name) int {
-	switch {
-	// Prolog Types are enumerated in reverse sort order.
-	case c.Type < k.Type:
-		return -1
-	case k.Type < c.Type:
-		return +1
+// Type identifies the Prolog type of a Symbol.
+type Type int
 
-	// Ints are sorted by hash, everything else is sorted by address.
-	case k.Type == Int:
-		return int(k.Hash - c.Hash)
-	case k.Addr < c.Addr:
-		return -1
-	case c.Addr < k.Addr:
-		return +1
-	default:
-		return 0
-	}
-}
+// Prolog types, in order.
+const (
+	Funct Type = -iota
+	Int
+	Float
+	Var
+)
 
 // A Namespace assigns Names to Symbols. Symbols are the literal symbols
 // encountered by the lexer. Names are handles for Symbols that contain the
@@ -59,76 +37,29 @@ func (k Name) Cmp(c Name) int {
 // retrieve Numbers from the namespace.
 type Namespace struct {
 	heap *treap
-	neck *Name
 }
 
 // Neck returns the Name for the neck ":-" functor.
 func (ns *Namespace) Neck() Name {
-	if ns.neck == nil {
-		k := ns.Name(Functor(":-"))
-		ns.neck = &k
-	}
-	return *ns.neck
+	return ns.Name(Functor(":-"))
 }
 
 // Name ensures that the Symbol is in the namespace, and returns its Name.
 func (ns *Namespace) Name(val Symbol) Name {
 	switch val := val.(type) {
-	case *Number:
-		if val.IsInt() {
-			return Name{
-				Type: Int,
-				Addr: 0,
-				Hash: val.Int64(),
-			}
-		}
-		return Name{
-			Type: Float,
-			Addr: val.Float64(),
-			Hash: val.Hash(),
-		}
-
 	case Functor:
-		var addr float64
+		var addr Name
 		addr, ns.heap = ns.heap.address(val)
-		return Name{
-			Type: Funct,
-			Addr: addr,
-			Hash: val.Hash(),
-		}
-
-	case Variable:
-		var addr float64
-		addr, ns.heap = ns.heap.address(val)
-		return Name{
-			Type: Var,
-			Addr: addr,
-			Hash: val.Hash(),
-		}
+		return addr
 
 	default:
-		panic(fmt.Errorf("cannot name symbol: %v", val))
+		return Name(val.Type())
 	}
 }
 
 // Value retrieves the named Symbol from the namespace.
 func (ns *Namespace) Value(k Name) Symbol {
-	switch k.Type {
-	case Int:
-		val := new(Number)
-		val.SetInt64(k.Hash)
-		return val
-	case Float:
-		val := new(Number)
-		val.SetFloat64(k.Addr)
-		return val
-	case Funct:
-		return ns.heap.get(k.Addr)
-	case Var:
-		return ns.heap.get(k.Addr)
-	default:
-		panic(fmt.Errorf("unknown Prolog type for key: %v", k))
-	}
+	return ns.heap.get(k)
 }
 
 // A treap is a binary search tree using random priorities to maintain balance.
@@ -141,14 +72,14 @@ func (ns *Namespace) Value(k Name) Symbol {
 // This treap provides a positive float64 address key for each of their nodes.
 type treap struct {
 	Symbol
-	addr        float64
+	addr        Name
+	lo, hi      Name
 	priority    int64
-	lo, hi      float64
 	left, right *treap
 }
 
 // get retrieves a symbol from the treap, given its address.
-func (t *treap) get(addr float64) Symbol {
+func (t *treap) get(addr Name) Symbol {
 	if t == nil {
 		return nil
 	}
@@ -164,14 +95,14 @@ func (t *treap) get(addr float64) Symbol {
 
 // address returns the address of a symbol. If the symbol does not yet have an
 // address, it is retained and a suitable address is generated.
-func (t *treap) address(val Symbol) (addr float64, root *treap) {
+func (t *treap) address(val Symbol) (addr Name, root *treap) {
 	if t == nil {
 		return 1, &treap{
 			Symbol:   val,
 			addr:     1,
-			priority: rand.Int63(),
 			lo:       0,
 			hi:       2,
+			priority: rand.Int63(),
 		}
 	}
 

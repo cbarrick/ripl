@@ -62,5 +62,5 @@ func (id Indicator) Atomic() bool {
 
 // Atom returns true if id represents an atom.
 func (id Indicator) Atom() bool {
-	return id.Arity == 0 && id.Name.Type == symbol.Funct
+	return id.Arity == 0 && 0 < id.Name
 }
