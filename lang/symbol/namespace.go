@@ -6,12 +6,17 @@ import (
 )
 
 // A Name is assigned to each symbol in a Namespace. Functors are assigned
-// unique names, and all other symbols are assigned a name reflecting the
-// Prolog type of the symbol. The ordering of names reflects the relative order
-// of symbols in the same namespace.
+// unique, positive names that reflect their relative ordering. All other
+// symbols are assigned negative names equal to their Type.
 type Name float64
 
-// Cmp compares names. Names representing symbols of different types can always be compared.
+// Cmp provides a partial ordering of Names. It returns a value less/greater
+// than 0 if k is ordered before/after c. It returns 0 if k and c refer to the
+// same symbol or if k and c cannot be compared.
+//
+// Names of symbols with different Types can always be compared, and Names of
+// functors can be compared to any other Name. Comparing symbols of the same
+// non-functor Type requires a lang.Indicator.
 func (k Name) Cmp(c Name) float64 {
 	return float64(k - c)
 }
@@ -19,32 +24,32 @@ func (k Name) Cmp(c Name) float64 {
 // Type identifies the Prolog type of a Symbol.
 type Type int
 
-// Prolog types, in order.
+// The types of Prolog symbols, in order.
 const (
-	Funct Type = -iota
+	Funct = -iota
 	Int
 	Float
 	Var
 )
 
-// A Namespace assigns Names to Symbols. Symbols are the literal symbols
-// encountered by the lexer. Names are handles for Symbols that contain the
-// minimum information for sorting, hashing, and unification. Names from
-// separate Namespaces cannot be compared.
+// A Namespace stores a set of Symbols and assigns Names to them as they are
+// inserted. The Names may then be used to retrieve the corresponding Symbol.
 //
-// Numeric types are keyed implicitly, and their values can be accessed and
-// mutated directly from the Name. In most cases, this prevents the need to
-// retrieve Numbers from the namespace.
+// Most important information about Symbols can be derived from the Name or
+// higher level structures produced by the parser, and comparing Names is
+// generally faster than comparing Symbols. However, Names from different
+// namespaces cannot be compared.
 type Namespace struct {
 	heap *treap
 }
 
-// Neck returns the Name for the neck ":-" functor.
+// Neck is a convenience function to get the Name for the neck ":-" functor.
 func (ns *Namespace) Neck() Name {
 	return ns.Name(Functor(":-"))
 }
 
-// Name ensures that the Symbol is in the namespace, and returns its Name.
+// Name names a Symbol. If the Symbol has never been named, a new Name is
+// generated and the Symbol is retained.
 func (ns *Namespace) Name(val Symbol) Name {
 	switch val := val.(type) {
 	case Functor:
@@ -57,7 +62,8 @@ func (ns *Namespace) Name(val Symbol) Name {
 	}
 }
 
-// Value retrieves the named Symbol from the namespace.
+// Value retrieves the named Symbol from the Namespace.
+// If no such Symbol exists under that Name, it returns nil.
 func (ns *Namespace) Value(k Name) Symbol {
 	return ns.heap.get(k)
 }
