@@ -10,17 +10,6 @@ import (
 // symbols are assigned negative names equal to their Type.
 type Name float64
 
-// Cmp provides a partial ordering of Names. It returns a value less/greater
-// than 0 if k is ordered before/after c. It returns 0 if k and c refer to the
-// same symbol or if k and c cannot be compared.
-//
-// Names of symbols with different Types can always be compared, and Names of
-// functors can be compared to any other Name. Comparing symbols of the same
-// non-functor Type requires a lang.Indicator.
-func (k Name) Cmp(c Name) float64 {
-	return float64(k - c)
-}
-
 // Type identifies the Prolog type of a Symbol.
 type Type int
 
@@ -31,6 +20,25 @@ const (
 	Float
 	Var
 )
+
+// Cmp provides a partial ordering of Names. It returns a value less/greater
+// than 0 if k is ordered before/after c. It returns 0 if n and m refer to the
+// same symbol or if n and m cannot be compared.
+//
+// Names of symbols with different Types can always be compared, and Names of
+// functors can be compared to any other Name. Comparing symbols of the same
+// non-functor Type requires a lang.Indicator.
+func (n Name) Cmp(m Name) float64 {
+	return float64(n - m)
+}
+
+// Type returns the type of the named symbol.
+func (n Name) Type() Type {
+	if 0 < n {
+		return Funct
+	}
+	return Type(int(n))
+}
 
 // A Namespace stores a set of Symbols and assigns Names to them as they are
 // inserted. The Names may then be used to retrieve the corresponding Symbol.
@@ -71,11 +79,11 @@ func (ns *Namespace) Value(k Name) Symbol {
 // A treap is a binary search tree using random priorities to maintain balance.
 // See Wikipedia for a description: https://en.wikipedia.org/wiki/Treap
 //
-// The treap type is implemented as a persistent data-structures meaning a
-// pointer to a treap will always represent the same tree. Thus operations that
-// mutate the tree will return a pointer to a new root.
+// The treap type is implemented as a path-copying persistent tree. A pointer to
+// a treap will always represent the same data. Operations that mutate the
+// treap will return a pointer to a new root node.
 //
-// This treap provides a positive float64 address key for each of their nodes.
+// This treap provides a positive float64 address key for each node.
 type treap struct {
 	Symbol
 	addr        Name
@@ -170,9 +178,10 @@ func (t *treap) address(val Symbol) (addr Name, root *treap) {
 			root = right
 		}
 		return addr, root
-	}
 
-	panic("unreachable")
+	default:
+		panic("unreachable")
+	}
 }
 
 func newTreapRight(t *treap, val Symbol) *treap {
@@ -209,7 +218,7 @@ func newTreapLeft(t *treap, val Symbol) *treap {
 
 func (t *treap) String() string {
 	if t == nil {
-		return "_"
+		return "nil"
 	}
-	return fmt.Sprintf("(%v.%v %v %v)", t.Symbol, t.priority, t.left, t.right)
+	return fmt.Sprintf("(%v@%v %v %v)", t.Symbol, t.priority, t.left, t.right)
 }
