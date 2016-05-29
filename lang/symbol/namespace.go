@@ -5,39 +5,32 @@ import (
 	"math/rand"
 )
 
-// A Name is assigned to each symbol in a Namespace. Functors are assigned
-// unique, positive names that reflect their relative ordering. All other
-// symbols are assigned negative names equal to their Type.
+// A Name is assigned to each symbol in a Namespace. The integer part of a Name
+// gives the Type of the named Symbol and the fractional part gives the ordering
+// of the named Symbol relative to other Symbols in the same Namespace.
 type Name float64
 
 // Type identifies the Prolog type of a Symbol.
 type Type int
 
-// The types of Prolog symbols, in order.
+// The types of Prolog symbols, in standard sort order.
 const (
-	Funct = -iota
-	Int
+	Var = iota
 	Float
-	Var
+	Int
+	Funct
 )
 
-// Cmp provides a partial ordering of Names. It returns a value less/greater
-// than 0 if k is ordered before/after c. It returns 0 if n and m refer to the
-// same symbol or if n and m cannot be compared.
-//
-// Names of symbols with different Types can always be compared, and Names of
-// functors can be compared to any other Name. Comparing symbols of the same
-// non-functor Type requires a lang.Indicator.
+// Cmp provides a total ordering of Names. It returns a value less/greater
+// than 0 if the Symbol named by n is ordered before/after the Symbol named by
+// m, or 0 if they refer to the same Symbol.
 func (n Name) Cmp(m Name) float64 {
 	return float64(n - m)
 }
 
 // Type returns the type of the named symbol.
 func (n Name) Type() Type {
-	if 0 < n {
-		return Funct
-	}
-	return Type(int(n))
+	return Type(n)
 }
 
 // A Namespace stores a set of Symbols and assigns Names to them as they are
@@ -48,7 +41,7 @@ func (n Name) Type() Type {
 // generally faster than comparing Symbols. However, Names from different
 // namespaces cannot be compared.
 type Namespace struct {
-	heap *treap
+	spaces [4]*treap // one address space for each Type
 }
 
 // Neck is a convenience function to get the Name for the neck ":-" functor.
@@ -59,48 +52,47 @@ func (ns *Namespace) Neck() Name {
 // Name names a Symbol. If the Symbol has never been named, a new Name is
 // generated and the Symbol is retained.
 func (ns *Namespace) Name(val Symbol) Name {
-	switch val := val.(type) {
-	case Functor:
-		var addr Name
-		addr, ns.heap = ns.heap.address(val)
-		return addr
-
-	default:
-		return Name(val.Type())
-	}
+	t := val.Type()
+	var addr float64
+	addr, ns.spaces[t] = ns.spaces[t].address(val)
+	return Name(addr + float64(t))
 }
 
 // Value retrieves the named Symbol from the Namespace.
 // If no such Symbol exists under that Name, it returns nil.
 func (ns *Namespace) Value(k Name) Symbol {
-	return ns.heap.get(k)
+	t := k.Type()
+	return ns.spaces[t].get(float64(k) - float64(t))
 }
 
 // A treap is a binary search tree using random priorities to maintain balance.
-// See Wikipedia for a description: https://en.wikipedia.org/wiki/Treap
+// See Wikipedia for a description: https://en.wikipedia.org/wiki/Treap.
 //
 // The treap type is implemented as a path-copying persistent tree. A pointer to
 // a treap will always represent the same data. Operations that mutate the
 // treap will return a pointer to a new root node.
 //
-// This treap provides a positive float64 address key for each node.
+// This treap provides a float64 address for each node. The address is between
+// 0 and 1 and the relative order of addresses reflects the relative order of
+// the symbols. Addresses are generated with entropy, and thus serve as a kind
+// of hash code for Symbols.
+//
+// See https://gist.github.com/cbarrick/67adf9fdb4e884ae514de56c164294b2.
 type treap struct {
 	Symbol
-	addr        Name
-	lo, hi      Name
+	addr        float64
+	lo, hi      float64
 	priority    int64
 	left, right *treap
 }
 
-// The base controls how addresses are distributed. Addresses generated at the
-// far right/left of the tree are set to their neighbor multiplied/divided by
-// the base. Because of the way float64s are represented, a base of 2 results
-// in an address space with very little entropy. A base of 31 appears to have
-// better entropy to support hashing in the database.
-const base = 31
+// The weight controls how addresses are distributed. Because of the way
+// float64s are represented, a weight of 1/2 results in am address space with
+// little entropy. A weight of 1/3 performs better in that regard.
+const weight = 1.0 / 3.0
 
 // get retrieves a symbol from the treap, given its address.
-func (t *treap) get(addr Name) Symbol {
+func (t *treap) get(addr float64) Symbol {
 	if t == nil {
 		return nil
 	}
@@ -116,13 +108,13 @@ func (t *treap) get(addr Name) Symbol {
 
 // address returns the address of a symbol. If the symbol does not yet have an
 // address, it is retained and a suitable address is generated.
-func (t *treap) address(val Symbol) (addr Name, root *treap) {
+func (t *treap) address(val Symbol) (addr float64, root *treap) {
 	if t == nil {
-		return 1, &treap{
+		return 0.5, &treap{
 			Symbol:   val,
-			addr:     1,
+			addr:     0.5,
 			lo:       0,
-			hi:       2,
+			hi:       1,
 			priority: rand.Int63(),
 		}
 	}
@@ -185,15 +177,9 @@ func (t *treap) address(val Symbol) (addr Name, root *treap) {
 }
 
 func newTreapRight(t *treap, val Symbol) *treap {
-	var addr Name
-	if t.hi == 0 {
-		addr = t.addr * base
-	} else {
-		addr = t.addr/2 + t.hi/2
-	}
 	return &treap{
 		Symbol:   val,
-		addr:     addr,
+		addr:     t.addr*weight + t.hi*(1-weight),
 		lo:       t.addr,
 		hi:       t.hi,
 		priority: rand.Int63(),
@@ -201,15 +187,9 @@ func newTreapRight(t *treap, val Symbol) *treap {
 }
 
 func newTreapLeft(t *treap, val Symbol) *treap {
-	var addr Name
-	if t.lo == 0 {
-		addr = t.addr / base
-	} else {
-		addr = t.addr/2 + t.lo/2
-	}
 	return &treap{
 		Symbol:   val,
-		addr:     addr,
+		addr:     t.addr*weight + t.lo*(1-weight),
 		lo:       t.lo,
 		hi:       t.addr,
 		priority: rand.Int63(),
