@@ -2,7 +2,6 @@ package symbol
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 )
 
@@ -17,50 +16,49 @@ const (
 	Funct
 )
 
-// A Name is assigned to each symbol in a Namespace. The integer part of a Name
-// gives the Type of the named Symbol and the fractional part gives the ordering
-// of the named Symbol relative to other Symbols in the same Namespace. Names
-// belonging to a Namespace are always positive.
+// A Name is an internalized representation of a Symbol. A unique Name is
+// assigned to each symbol in a Namespace, and can be used to retreave the
+// Symbol from the Namespace. Names reflect the order and equality of the
+// Symbols they name, and thus can (and should) be used in place of Symbols.
 //
-// Names may also be generated at runtime, e.g. to name the result of an
-// arithmetic evaluation or a generated variable. We call these dynamic Names.
-// The Symbol refered to by a dynamic Name may not exist in any Namespace.
-// The only requirement of dynamic Names is that the (positive) integer part of
-// the name gives the Type. It is left to the user to interpret dynamic Names.
+// The integer part of a Name gives the Type of the named Symbol and the
+// fractional part gives the order of the named Symbol relative to other Symbols
+// in the same Namespace. Names belonging to different Namespaces cannot be
+// compared.
+//
+// Sometimes it is necessary to generate Symbols at runtime, e.g. to create a
+// new variable. We can treat such Symbols as implicit and generate their Name
+// without explicitly generating the Symbol. We call these dynamic Names. A
+// dynamic Name has no fractional part and cannot be compared to other Names of
+// the same type. The wrapping structure (usually an Indicator) must retain
+// enough context to properly interpret a dynamic Name.
 type Name float64
 
-// NewName returns a new dynamic Name.
+// NewName returns a new dynamic Name of the given Type.
 func NewName(t Type) Name {
-	return Name(-t)
-}
-
-// Dynamic returns true when n is a dynamic Name, i.e. one generated at runtime.
-func (n Name) Dynamic() bool {
-	return n < 0
-}
-
-// Cmp provides a total ordering of Names. It returns a value less/greater than
-// 0 if the Symbol named by n is ordered before/after the Symbol named by m. A
-// value of 0 is returned if n and m refer to the same Symbol or if n and m are
-// the same Type and either is dynamic.
-//
-// It is more efficient to compare Names directly when possible. I.e. prefer
-// `n < m` over `n.Cmp(m)`. This is only possible when neither n nor m are
-// dynamic.
-func (n Name) Cmp(m Name) float64 {
-	if n < 0 || m < 0 {
-		if n.Type() == m.Type() {
-			return 0
-		}
-		n = Name(math.Abs(float64(n)))
-		m = Name(math.Abs(float64(m)))
-	}
-	return float64(n - m)
+	return Name(t)
 }
 
 // Type returns the type of the named symbol.
 func (n Name) Type() Type {
-	return Type(math.Abs(float64(n)))
+	return Type(n)
+}
+
+// Dynamic returns true when n is a dynamic Name, i.e. one generated at runtime.
+func (n Name) Dynamic() bool {
+	return n-Name(int(n)) == 0
+}
+
+// Cmp provides a total ordering of static Names. It returns a value less than,
+// equal to, or greater than 0 if the Symbol named by n is ordered before, equal
+// to, or after the Symbol named by m. Dynamic names cannot be compared to names
+// of the same type; however no such check is performed at this level.
+//
+// It may be more efficient to compare Names directly when possible. I.e. prefer
+// `n < m` over `n.Cmp(m)`. Again, this is only possible when neither n nor m
+// are dynamic.
+func (n Name) Cmp(m Name) float64 {
+	return float64(n - m)
 }
 
 // A Namespace stores a set of Symbols and assigns Names to them as they are
