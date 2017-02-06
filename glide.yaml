@@ -1,3 +1,0 @@
-package: github.com/cbarrick/ripl
-import:
-- package: golang.org/x/text

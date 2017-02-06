@@ -1,0 +1,6 @@
+[package]
+name = "ripl"
+version = "0.1.0"
+authors = ["Chris Barrick <cbarrick1@gmail.com>"]
+
+[dependencies]
