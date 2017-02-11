@@ -1,4 +1,4 @@
-use ::namespace::NameSpace;
+use lang::namespace::NameSpace;
 
 fn is_special(ch: char) -> bool {
     "\'\",.|%{[()]}".contains(ch)
