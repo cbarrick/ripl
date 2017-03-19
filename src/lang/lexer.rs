@@ -518,7 +518,7 @@ mod test {
     use super::*;
 
     #[test]
-    #[rustfmt_skip]
+    #[cfg_attr(rustfmt, rustfmt_skip)]
     fn basic() {
         let pl = "_abcd ABCD foobar 'hello world' +++\n\
                   % this is a comment\n\
@@ -552,7 +552,7 @@ mod test {
     }
 
     #[test]
-    #[rustfmt_skip]
+    #[cfg_attr(rustfmt, rustfmt_skip)]
     fn realistic() {
         let pl = "member(H, [H|T]).\n\
                   member(X, [_|T]) :- member(X, T).\n";
