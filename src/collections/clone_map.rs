@@ -55,7 +55,7 @@ struct Store<K, V>
 
 
 // Pubic API
-// ==================================================
+// --------------------------------------------------
 
 impl<K, V> CloneMap<K, V, RandomState>
     where K: Hash + Eq + Clone,
@@ -87,7 +87,7 @@ impl<K, V> CloneMap<K, V, RandomState>
     /// ```
     pub fn with_branch_factor(n: u32) -> CloneMap<K, V> {
         if n > 64 {
-            panic!("branch factor cannot exceed 6")
+            panic!("branch factor cannot exceed 64")
         }
         let w = n.next_power_of_two().trailing_zeros();
         CloneMap {
@@ -251,7 +251,7 @@ impl<'a, K, Q, V, S> Index<&'a Q> for CloneMap<K, V, S>
 }
 
 // CNode
-// ==================================================
+// --------------------------------------------------
 
 impl<K, V> CNode<K, V>
     where K: Hash + Eq + Clone,
@@ -455,7 +455,7 @@ impl<K, V> CNode<K, V>
 
 
 // Store
-// ==================================================
+// --------------------------------------------------
 
 impl<K, V> Store<K, V>
     where K: Hash + Eq + Clone,
@@ -471,7 +471,7 @@ impl<K, V> Store<K, V>
 }
 
 // Unit Tests
-// ==================================================
+// --------------------------------------------------
 
 #[cfg(test)]
 mod test {

@@ -13,8 +13,8 @@ pub struct Lexer<'ns, I> {
 
 /// A lexical item of Prolog.
 ///
-/// Every `Token` includes its line and column as the first two members. When relevant, the third
-/// member gives an interpreted value of the token.
+/// Every `Token` includes its line and column as the first two members. When
+/// relevant, the third member gives an interpreted value of the token.
 ///
 /// Lexical errors are given as a `Token::Err` whose value is the error message.
 #[derive(Debug)]
@@ -99,13 +99,15 @@ impl<'ns, I> Iterator for Lexer<'ns, I>
 // --------------------------------------------------
 // This impl gives the various private lexing routines.
 //
-// When these functions are called, the first character of the token has already been read from
-// the underlying stream. When appropriate, the first character is passed as an argument.
+// When these functions are called, the first character of the token has
+// already been read from the underlying stream. When appropriate, the first
+// character is passed as an argument.
 //
-// The functions may use the buffer as scratch space to build a token string. The buffer is
-// guarenteed to be empty when the functions are called. The functions MUST clear the buffer
-// before returning. If a function reads past its token, it may write a single character to the
-// buffer after it is cleared. In this case, that character is treated as the first character of
+// The functions may use the buffer as scratch space to build a token string.
+// The buffer is guarenteed to be empty when the functions are called. The
+// functions MUST clear the buffer before returning. If a function reads past
+// its token, it may write a single character to the buffer after it is
+// cleared. In this case, that character is treated as the first character of
 // the next token.
 
 impl<'ns, I> Lexer<'ns, I>
@@ -145,7 +147,7 @@ impl<'ns, I> Lexer<'ns, I>
         }
     }
 
-    /// Returns the token for a simple function symbol starting with a symbolic char.
+    /// Returns the token for a function symbol starting with a symbolic char.
     fn lex_symbolic(&mut self, first: char) -> Option<Token<'ns>> {
         let line = self.line;
         let col = self.col;
@@ -397,8 +399,8 @@ impl<'ns, I> Lexer<'ns, I>
 
     /// Returns a Functor or String for a token enclosed in quotes.
     ///
-    /// Escape sequences are replaced and the token will not include the surrounding quotes.
-    /// An Err token is returned if the quote is unclosed.
+    /// Escape sequences are replaced and the token will not include the
+    /// surrounding quotes. An Err token is returned if the quote is unclosed.
     fn lex_quote(&mut self, quote: char) -> Option<Token<'ns>> {
         let line = self.line;
         let col = self.col;
@@ -465,7 +467,7 @@ impl<'ns, I> Lexer<'ns, I>
         }
     }
 
-    /// Returns the token following the current span of whitespace/control characters.
+    /// Skips whitespace/control characters and returns the next token.
     fn lex_space(&mut self, first: char) -> Option<Token<'ns>> {
         let mut ch = Some(first);
         loop {
@@ -516,7 +518,7 @@ mod test {
     use super::*;
 
     #[test]
-    #[cfg_attr(rustfmt, rustfmt_skip)] // TODO: #[rustfmt_skip] once custom attributes stabilize
+    #[rustfmt_skip]
     fn basic() {
         let pl = "_abcd ABCD foobar 'hello world' +++\n\
                   % this is a comment\n\
@@ -544,13 +546,13 @@ mod test {
         assert_eq!(toks.next().unwrap(), Token::Int(5, 4, -0xff));
         assert_eq!(toks.next().unwrap(), Token::Float(5, 10, -1.23));
         assert_eq!(toks.next().unwrap(), Token::ParenOpen(5, 16));
-        assert_eq!(toks.next().unwrap(), Token::Funct(5, 17,ns.name( "-")));
+        assert_eq!(toks.next().unwrap(), Token::Funct(5, 17, ns.name("-")));
         assert_eq!(toks.next().unwrap(), Token::ParenClose(5, 18));
         assert_eq!(toks.next(), None);
     }
 
     #[test]
-    #[cfg_attr(rustfmt, rustfmt_skip)] // TODO: #[rustfmt_skip] once custom attributes stabilize
+    #[rustfmt_skip]
     fn realistic() {
         let pl = "member(H, [H|T]).\n\
                   member(X, [_|T]) :- member(X, T).\n";
