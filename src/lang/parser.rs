@@ -115,8 +115,13 @@ impl<'ns, I> Parser<'ns, I>
                 match self.inner.peek() {
                     // Compound term
                     Some(&Token::ParenOpen(_, _)) => {
+                        // We reserve space for the functor by pushing a 0-ary
+                        // function symbol before parsing the args. Once we
+                        // know the true arity, we update the symbol.
+                        let i = self.buf.len();
+                        self.buf.push(Symbol::Funct(0, val));
                         let arity = self.args();
-                        self.buf.push(Symbol::Funct(arity, val));
+                        self.buf[i] = Symbol::Funct(arity, val);
                     }
 
                     // Definitly an Atom
@@ -172,13 +177,13 @@ mod test {
     fn basic() {
         let ns = NameSpace::new();
         let pl = "foo(bar, baz(123, 456.789), \"hello world\", X).\n";
-        let st = vec![Funct(0, ns.name("bar")),
+        let st = vec![Funct(4, ns.name("foo")),
+                      Funct(0, ns.name("bar")),
+                      Funct(2, ns.name("baz")),
                       Int(123),
                       Float(456.789),
-                      Funct(2, ns.name("baz")),
                       Str("hello world"),
-                      Var(0),
-                      Funct(4, ns.name("foo"))];
+                      Var(0)];
         let st = unsafe { struct_from_vec(st) };
         st.validate();
         let mut parser = Parser::new(pl.chars(), &ns);
