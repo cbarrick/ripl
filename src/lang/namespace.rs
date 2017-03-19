@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::cmp::{PartialOrd, Ordering};
 use std::collections::HashSet;
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
@@ -20,7 +21,6 @@ pub struct NameSpace {
 /// value of the pointer, not the contents of the string. Thus `Name`s for the same string but
 /// from different `NameSpace`s are not equal. Ordering, however, is implemented across namespaces
 /// as standard lexicographic ordering.
-#[derive(Debug)]
 #[derive(Clone, Copy)]
 #[derive(PartialEq, Eq)]
 #[derive(Ord)] // custom impl of PartialOrd to sort lexicographically
@@ -108,6 +108,22 @@ impl<'ns> PartialOrd for Name<'ns> {
         self.as_str().partial_cmp(other.as_str())
     }
 }
+
+impl<'ns> fmt::Display for Name<'ns> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl<'ns> fmt::Debug for Name<'ns> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}@{:?}", self.as_str(), self.ptr)
+    }
+}
+
+// Names are both Send and Sync because they are immutable.
+unsafe impl<'ns> Send for Name<'ns> {}
+unsafe impl<'ns> Sync for Name<'ns> {}
 
 // Tests
 // --------------------------------------------------
