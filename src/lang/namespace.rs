@@ -23,7 +23,6 @@ pub struct NameSpace {
 /// as standard lexicographic ordering.
 #[derive(Clone, Copy)]
 #[derive(PartialEq, Eq)]
-#[derive(Ord)] // custom impl of PartialOrd to sort lexicographically
 pub struct Name<'ns> {
     ptr: *const str,
     pha: PhantomData<&'ns str>,
@@ -105,7 +104,13 @@ impl<'ns> Deref for Name<'ns> {
 
 impl<'ns> PartialOrd for Name<'ns> {
     fn partial_cmp(&self, other: &Name<'ns>) -> Option<Ordering> {
-        self.as_str().partial_cmp(other.as_str())
+        Some(self.cmp(other))
+    }
+}
+
+impl<'ns> Ord for Name<'ns> {
+    fn cmp(&self, other: &Name<'ns>) -> Ordering {
+        self.as_str().cmp(other.as_str())
     }
 }
 
