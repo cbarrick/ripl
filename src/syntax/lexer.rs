@@ -1,7 +1,7 @@
 use std::fmt;
 use std::iter::Fuse;
 
-use lang::namespace::{NameSpace, Name};
+use syntax::namespace::{NameSpace, Name};
 
 /// A lexer for Prolog source code.
 ///

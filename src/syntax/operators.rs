@@ -1,7 +1,7 @@
 use std::cmp::{PartialOrd, Ordering};
 use std::ops::Deref;
 
-use lang::namespace::{NameSpace, Name};
+use syntax::namespace::{NameSpace, Name};
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]
@@ -268,7 +268,7 @@ impl<'ns> OpTable<'ns> {
 
 #[cfg(test)]
 mod test {
-    use lang::namespace::NameSpace;
+    use syntax::namespace::NameSpace;
     use super::*;
 
     #[test]

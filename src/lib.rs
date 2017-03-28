@@ -4,4 +4,5 @@
 extern crate rand;
 
 pub mod collections;
-pub mod lang;
+pub mod syntax;
+pub mod repr;

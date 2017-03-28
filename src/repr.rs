@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use lang::namespace::Name;
+use syntax::namespace::Name;
 
 #[derive(Debug)]
 #[derive(Clone, Copy)]

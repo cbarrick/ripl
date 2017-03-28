@@ -19,10 +19,10 @@ use std::iter::Peekable;
 use std::mem;
 use std::vec::Drain;
 
-use lang::lexer::{Lexer, Token};
-use lang::namespace::{NameSpace, Name};
-use lang::operators::{OpTable, Op};
-use lang::repr::{Structure, Symbol};
+use syntax::lexer::{Lexer, Token};
+use syntax::namespace::{NameSpace, Name};
+use syntax::operators::{OpTable, Op};
+use repr::{Structure, Symbol};
 
 /// An iterator over `Structure`s in UTF-8 text.
 ///
@@ -318,7 +318,7 @@ impl<'a> fmt::Display for SyntaxError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use lang::repr::Symbol::*;
+    use repr::Symbol::*;
 
     #[test]
     fn basic() {
