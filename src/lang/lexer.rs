@@ -1,10 +1,13 @@
+use std::fmt;
+use std::iter::Fuse;
+
 use lang::namespace::{NameSpace, Name};
 
 /// A lexer for Prolog source code.
 ///
 /// Implemented as an iterator over `Token`s.
 pub struct Lexer<'ns, I> {
-    inner: I,
+    inner: Fuse<I>,
     ns: &'ns NameSpace,
     buf: String,
     line: u32,
@@ -21,7 +24,7 @@ pub struct Lexer<'ns, I> {
 #[derive(Clone, Copy)]
 #[derive(PartialEq)]
 pub enum Token<'ns> {
-    Err(u32, u32, &'static str), // TODO: Change error from str to an error code
+    Err(u32, u32, &'static str),
     Funct(u32, u32, Name<'ns>),
     Str(u32, u32, Name<'ns>),
     Var(u32, u32, Name<'ns>),
@@ -33,8 +36,8 @@ pub enum Token<'ns> {
     BracketClose(u32, u32),
     BraceOpen(u32, u32),
     BraceClose(u32, u32),
-    Bar(u32, u32),
-    Comma(u32, u32),
+    Bar(u32, u32, Name<'ns>),
+    Comma(u32, u32, Name<'ns>),
     Dot(u32, u32),
 }
 
@@ -49,7 +52,7 @@ impl<'ns, I> Lexer<'ns, I>
     /// The line and column counts both start at 1.
     pub fn new(chars: I, ns: &'ns NameSpace) -> Lexer<'ns, I> {
         Lexer {
-            inner: chars,
+            inner: chars.fuse(),
             ns: ns,
             buf: String::with_capacity(32),
             line: 1,
@@ -63,12 +66,9 @@ impl<'ns, I> Iterator for Lexer<'ns, I>
 {
     type Item = Token<'ns>;
 
-    /// Generates the next token in the underlying stream.
+    /// Extracts the next token from the underlying stream.
     fn next(&mut self) -> Option<Token<'ns>> {
-        let next = match self.buf.pop() {
-            Some(ch) => Some(ch),
-            None => self.inner.next(),
-        };
+        let next = self.buf.pop().or_else(|| self.inner.next());
         match next {
             Some('(') => self.lex_simple('('),
             Some(')') => self.lex_simple(')'),
@@ -91,6 +91,72 @@ impl<'ns, I> Iterator for Lexer<'ns, I>
             Some(ch) if ch.is_uppercase() => self.lex_var(ch),
             Some(ch) => self.lex_functor(ch),
             None => None,
+        }
+    }
+}
+
+impl<'ns> Token<'ns> {
+    #[inline]
+    pub fn line(&self) -> u32 {
+        match *self {
+            Token::Err(line, ..) => line,
+            Token::Funct(line, ..) => line,
+            Token::Str(line, ..) => line,
+            Token::Var(line, ..) => line,
+            Token::Int(line, ..) => line,
+            Token::Float(line, ..) => line,
+            Token::ParenOpen(line, ..) => line,
+            Token::ParenClose(line, ..) => line,
+            Token::BracketOpen(line, ..) => line,
+            Token::BracketClose(line, ..) => line,
+            Token::BraceOpen(line, ..) => line,
+            Token::BraceClose(line, ..) => line,
+            Token::Bar(line, ..) => line,
+            Token::Comma(line, ..) => line,
+            Token::Dot(line, ..) => line,
+        }
+    }
+
+    #[inline]
+    pub fn col(&self) -> u32 {
+        match *self {
+            Token::Err(_, col, _) => col,
+            Token::Funct(_, col, _) => col,
+            Token::Str(_, col, _) => col,
+            Token::Var(_, col, _) => col,
+            Token::Int(_, col, _) => col,
+            Token::Float(_, col, _) => col,
+            Token::ParenOpen(_, col) => col,
+            Token::ParenClose(_, col) => col,
+            Token::BracketOpen(_, col) => col,
+            Token::BracketClose(_, col) => col,
+            Token::BraceOpen(_, col) => col,
+            Token::BraceClose(_, col) => col,
+            Token::Bar(_, col, _) => col,
+            Token::Comma(_, col, _) => col,
+            Token::Dot(_, col) => col,
+        }
+    }
+}
+
+impl<'ns> fmt::Display for Token<'ns> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Token::Err(.., msg) => write!(f, "{}", msg),
+            Token::Funct(.., val) => write!(f, "{}", val),
+            Token::Str(.., val) => write!(f, "{}", val),
+            Token::Var(.., val) => write!(f, "{}", val),
+            Token::Int(.., val) => write!(f, "{}", val),
+            Token::Float(.., val) => write!(f, "{}", val),
+            Token::ParenOpen(..) => f.write_str("("),
+            Token::ParenClose(..) => f.write_str(")"),
+            Token::BracketOpen(..) => f.write_str("["),
+            Token::BracketClose(..) => f.write_str("]"),
+            Token::BraceOpen(..) => f.write_str("{"),
+            Token::BraceClose(..) => f.write_str("}"),
+            Token::Bar(..) => f.write_str("|"),
+            Token::Comma(..) => f.write_str(","),
+            Token::Dot(..) => f.write_str("."),
         }
     }
 }
@@ -460,8 +526,8 @@ impl<'ns, I> Lexer<'ns, I>
             ']' => Some(Token::BracketClose(line, col)),
             '{' => Some(Token::BraceOpen(line, col)),
             '}' => Some(Token::BraceClose(line, col)),
-            ',' => Some(Token::Comma(line, col)),
-            '|' => Some(Token::Bar(line, col)),
+            ',' => Some(Token::Comma(line, col, self.ns.name(","))),
+            '|' => Some(Token::Bar(line, col, self.ns.name("|"))),
             '.' => Some(Token::Dot(line, col)),
             _ => panic!("lex_simple called without a grouping symbol"),
         }
@@ -563,10 +629,10 @@ mod test {
         assert_eq!(toks.next().unwrap(), Token::Funct(1, 1, ns.name("member")));
         assert_eq!(toks.next().unwrap(), Token::ParenOpen(1, 7));
         assert_eq!(toks.next().unwrap(), Token::Var(1, 8, ns.name("H")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(1, 9));
+        assert_eq!(toks.next().unwrap(), Token::Comma(1, 9, ns.name(",")));
         assert_eq!(toks.next().unwrap(), Token::BracketOpen(1, 11));
         assert_eq!(toks.next().unwrap(), Token::Var(1, 12, ns.name("H")));
-        assert_eq!(toks.next().unwrap(), Token::Bar(1, 13));
+        assert_eq!(toks.next().unwrap(), Token::Bar(1, 13, ns.name("|")));
         assert_eq!(toks.next().unwrap(), Token::Var(1, 14, ns.name("T")));
         assert_eq!(toks.next().unwrap(), Token::BracketClose(1, 15));
         assert_eq!(toks.next().unwrap(), Token::ParenClose(1, 16));
@@ -576,10 +642,10 @@ mod test {
         assert_eq!(toks.next().unwrap(), Token::Funct(2, 1, ns.name("member")));
         assert_eq!(toks.next().unwrap(), Token::ParenOpen(2, 7));
         assert_eq!(toks.next().unwrap(), Token::Var(2, 8, ns.name("X")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(2, 9));
+        assert_eq!(toks.next().unwrap(), Token::Comma(2, 9, ns.name(",")));
         assert_eq!(toks.next().unwrap(), Token::BracketOpen(2, 11));
         assert_eq!(toks.next().unwrap(), Token::Var(2, 12, ns.name("_")));
-        assert_eq!(toks.next().unwrap(), Token::Bar(2, 13));
+        assert_eq!(toks.next().unwrap(), Token::Bar(2, 13, ns.name("|")));
         assert_eq!(toks.next().unwrap(), Token::Var(2, 14, ns.name("T")));
         assert_eq!(toks.next().unwrap(), Token::BracketClose(2, 15));
         assert_eq!(toks.next().unwrap(), Token::ParenClose(2, 16));
@@ -587,7 +653,7 @@ mod test {
         assert_eq!(toks.next().unwrap(), Token::Funct(2, 21, ns.name("member")));
         assert_eq!(toks.next().unwrap(), Token::ParenOpen(2, 27));
         assert_eq!(toks.next().unwrap(), Token::Var(2, 28, ns.name("X")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(2, 29));
+        assert_eq!(toks.next().unwrap(), Token::Comma(2, 29, ns.name(",")));
         assert_eq!(toks.next().unwrap(), Token::Var(2, 31, ns.name("T")));
         assert_eq!(toks.next().unwrap(), Token::ParenClose(2, 32));
         assert_eq!(toks.next().unwrap(), Token::Dot(2, 33));

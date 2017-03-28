@@ -3,6 +3,7 @@ use std::cmp::{PartialOrd, Ordering};
 use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
+use std::mem;
 use std::ops::Deref;
 
 /// Assigns `Name`s to strings.
@@ -16,11 +17,12 @@ pub struct NameSpace {
 
 /// A lightweight representation of a string.
 ///
-/// A `Name` is almost exactly like a `&'ns str` where `'ns` is the lifetime of the `NameSpace` to
-/// which it belongs. The major difference is that names are compared for equality only by the
-/// value of the pointer, not the contents of the string. Thus `Name`s for the same string but
-/// from different `NameSpace`s are not equal. Ordering, however, is implemented across namespaces
-/// as standard lexicographic ordering.
+/// A `Name` is almost exactly like a `&'ns str` where `'ns` is the lifetime
+/// of the `NameSpace` to which it belongs. The major difference is that names
+/// are compared for equality only by the value of the pointer, not the
+/// contents of the string. Thus `Name`s for the same string but from different
+/// `NameSpace`s are not equal. Ordering, however, is implemented across
+/// namespaces as standard lexicographic ordering.
 #[derive(Clone, Copy)]
 #[derive(PartialEq, Eq)]
 pub struct Name<'ns> {
@@ -46,7 +48,7 @@ impl NameSpace {
         {
             let strings = self.strings.borrow();
             if let Some(s) = strings.get(tok.as_ref()) {
-                let s = unsafe { ::std::mem::transmute::<&str, &'ns str>(s) };
+                let s = unsafe { mem::transmute::<&str, &'ns str>(s) };
                 return Name::from(s);
             }
         }
@@ -54,7 +56,7 @@ impl NameSpace {
         // Otherwise, turn this token into a name and insert it into the set.
         let mut strings = self.strings.borrow_mut();
         let boxed = tok.into().into_boxed_str();
-        let s = unsafe { ::std::mem::transmute::<&str, &'ns str>(boxed.as_ref()) };
+        let s = unsafe { mem::transmute::<&str, &'ns str>(boxed.as_ref()) };
         strings.insert(boxed);
         Name::from(s)
     }
@@ -70,7 +72,7 @@ impl NameSpace {
 
 impl<'ns> Name<'ns> {
     pub fn as_str(&self) -> &'ns str {
-        unsafe { ::std::mem::transmute(self.ptr) }
+        unsafe { mem::transmute(self.ptr) }
     }
 }
 

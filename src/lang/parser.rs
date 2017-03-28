@@ -1,53 +1,110 @@
+//! A parser for logic programs.
+//!
+//! The syntax of Ripl closely resembles [ISO Prolog][1]. Prolog is a simple
+//! operator precedence language with function symbols, lists, variables,
+//! numbers, and infix, prefix, and postfix operators.
+//!
+//! The parsing logic for Prolog is independent of the set of operators,
+//! allowing the operator to be modified at runtime. The parser is implemented
+//! using the [precedence climbing method][2], however the notion of precedence
+//! is inverted from the textbook definition. In Prolog, greater precedence is
+//! given to the outermost operators (`+` is said to be of greater precedence
+//! than `*`). Thus the parsing algorithm is a precedence *descending* method.
+//!
+//! [1]: https://en.wikipedia.org/wiki/Prolog_syntax_and_semantics
+//! [2]: https://en.wikipedia.org/wiki/Operator-precedence_parser
+
+use std::fmt;
 use std::iter::Peekable;
 use std::mem;
+use std::vec::Drain;
 
 use lang::lexer::{Lexer, Token};
 use lang::namespace::{NameSpace, Name};
-use lang::repr::{Symbol, Structure};
+use lang::operators::{OpTable, Op};
+use lang::repr::{Structure, Symbol};
 
-pub struct Parser<'ns, I>
+/// An iterator over `Structure`s in UTF-8 text.
+///
+/// The parser requires a reference to a `NameSpace` to assign names to
+/// constants and a reference to an `OpTable` to specify the operators and
+/// their precedence. The lifetime `'a` refers to both references.
+///
+/// A `Parser` maintains a list of encountered syntax errors. If this list is
+/// non-empty, then the structures emitted cannot be assumed to be valid.
+pub struct Parser<'a, I>
     where I: Iterator<Item = char>
 {
-    inner: Peekable<Lexer<'ns, I>>,
-    vars: Vec<Name<'ns>>,
-    buf: Vec<Symbol<'ns>>,
+    ops: &'a OpTable<'a>,
+    lexer: Peekable<Lexer<'a, I>>,
+    errs: Vec<SyntaxError>,
+    vars: Vec<Name<'a>>,
+    buf: Vec<Symbol<'a>>,
 }
+
+/// The location and description of syntax errors.
+#[derive(Debug)]
+#[derive(Clone)]
+#[derive(PartialEq, Eq)]
+#[derive(PartialOrd, Ord)]
+pub struct SyntaxError {
+    pub line: u32,
+    pub col: u32,
+    pub msg: String,
+}
+
+/// A type alias for results with possible `SyntaxError`s.
+pub type Result<T> = ::std::result::Result<T, SyntaxError>;
 
 // Public API
 // --------------------------------------------------
 
-impl<'ns, I> Parser<'ns, I>
+impl<'a, I> Parser<'a, I>
     where I: Iterator<Item = char>
 {
-    pub fn new(chars: I, ns: &'ns NameSpace) -> Parser<'ns, I> {
+    pub fn new(chars: I, ns: &'a NameSpace, ops: &'a OpTable<'a>) -> Parser<'a, I> {
         Parser {
-            inner: Lexer::new(chars, ns).peekable(),
+            ops: ops,
+            lexer: Lexer::new(chars, ns).peekable(),
+            errs: Vec::new(),
             vars: Vec::with_capacity(32),
             buf: Vec::with_capacity(256),
         }
     }
+
+    pub fn errs(&mut self) -> Drain<SyntaxError> {
+        self.errs.drain(0..)
+    }
 }
 
-impl<'ns, I> Iterator for Parser<'ns, I>
+impl<'a, I> Iterator for Parser<'a, I>
     where I: Iterator<Item = char>
 {
-    type Item = Box<Structure<'ns>>;
-    fn next(&mut self) -> Option<Box<Structure<'ns>>> {
-        // parse the next term
+    type Item = Box<Structure<'a>>;
+    fn next(&mut self) -> Option<Box<Structure<'a>>> {
+        self.vars.clear();
         self.buf.clear();
-        self.term(1200);
-
-        match self.inner.next() {
-            Some(Token::Dot(..)) => {
+        match self.read(1201) {
+            Ok(_) => {
                 if self.buf.len() == 0 {
                     None
-                } else {
+                } else if let Some(Token::Dot(..)) = self.lexer.next() {
                     let structure = unsafe { struct_from_vec(self.buf.clone()) };
                     Some(structure)
+                } else {
+                    // TODO: get line and col numbers
+                    self.errs.push(SyntaxError {
+                        line: 0,
+                        col: 0,
+                        msg: "operator priority clash".to_string(),
+                    });
+                    self.next()
                 }
             }
-
-            _ => panic!("expected operator"),
+            Err(err) => {
+                self.errs.push(err);
+                return self.next();
+            }
         }
     }
 }
@@ -60,108 +117,198 @@ impl<'ns, I> Iterator for Parser<'ns, I>
 /// This is unsafe because an arbitrary vector of symbols in not necessarily a
 /// valid structure. Assuming the correctness of the parsing algorithm, it is
 /// safe to call this function on the completed buffer.
-unsafe fn struct_from_vec<'ns>(vec: Vec<Symbol<'ns>>) -> Box<Structure<'ns>> {
+unsafe fn struct_from_vec<'a>(vec: Vec<Symbol<'a>>) -> Box<Structure<'a>> {
     mem::transmute(vec.into_boxed_slice())
 }
 
-impl<'ns, I> Parser<'ns, I>
+impl<'a, I> Parser<'a, I>
     where I: Iterator<Item = char>
 {
-    fn term(&mut self, prec: usize) {
-        match self.inner.next() {
-            Some(Token::Str(_, _, val)) => {
-                self.buf.push(Symbol::Str(val.as_str()));
-            }
-
-            Some(Token::Var(_, _, val)) => {
-                match self.vars.iter().position(|name| *name == val) {
-                    Some(n) => self.buf.push(Symbol::Var(n)),
-                    None => {
-                        let n = self.vars.len();
-                        self.vars.push(val);
-                        self.buf.push(Symbol::Var(n));
+    /// Reads the next term up to, but not including, the trailing period.
+    ///
+    /// The return value is the precedence of the term upon success
+    /// or otherwise a syntax error.
+    ///
+    /// Upon returning, the parse tree exists in the buffer.
+    fn read(&mut self, prec: u32) -> Result<u32> {
+        self.read_primary(prec)?;
+        loop {
+            match self.lexer.peek() {
+                Some(&Token::Bar(.., name)) |
+                Some(&Token::Comma(.., name)) |
+                Some(&Token::Funct(.., name)) => {
+                    match self.ops.get_compatible(name, prec) {
+                        None => break,
+                        Some(op) => {
+                            self.lexer.next();
+                            match op {
+                                Op::XFY(..) => {
+                                    self.read(op.prec())?;
+                                    self.buf.push(Symbol::Funct(2, name));
+                                }
+                                Op::YFX(..) | Op::XFX(..) => {
+                                    self.read(op.prec() - 1)?;
+                                    self.buf.push(Symbol::Funct(2, name));
+                                }
+                                _ => {
+                                    self.buf.push(Symbol::Funct(1, name));
+                                }
+                            }
+                        }
                     }
                 }
+                _ => break,
             }
+        }
+        Ok(prec)
+    }
 
-            Some(Token::Int(_, _, val)) => {
-                self.buf.push(Symbol::Int(val));
-            }
-
-            Some(Token::Float(_, _, val)) => {
-                self.buf.push(Symbol::Float(val));
-            }
-
-            Some(Token::ParenOpen(_, _)) => {
-                self.term(1200);
-                if let Some(Token::ParenClose(_, _)) = self.inner.next() {
-                    // It worked, do nothing
-                } else {
-                    panic!("expected close paren")
-                }
-            }
-
-            Some(Token::BracketOpen(_, _)) => {
-                // TODO
-                panic!("lists not yet supported")
-            }
-
-            Some(Token::BraceOpen(_, _)) => {
-                // TODO
-                panic!("braces not yet supported")
-            }
-
-            Some(Token::Funct(_, _, val)) => {
-                match self.inner.peek() {
+    /// Reads the left side of an infix operator at a given precedence.
+    fn read_primary(&mut self, prec: u32) -> Result<u32> {
+        match self.lexer.next() {
+            Some(Token::Bar(.., name)) |
+            Some(Token::Comma(.., name)) |
+            Some(Token::Funct(.., name)) => {
+                match self.lexer.peek() {
                     // Compound term
-                    Some(&Token::ParenOpen(_, _)) => {
-                        // We reserve space for the functor by pushing a 0-ary
-                        // function symbol before parsing the args. Once we
-                        // know the true arity, we update the symbol.
-                        let i = self.buf.len();
-                        self.buf.push(Symbol::Funct(0, val));
-                        let arity = self.args();
-                        self.buf[i] = Symbol::Funct(arity, val);
+                    Some(&Token::ParenOpen(..)) => {
+                        let arity = self.read_args()?;
+                        self.buf.push(Symbol::Funct(arity, name));
+                        Ok(prec)
                     }
 
-                    // Definitly an Atom
-                    Some(&Token::ParenClose(_, _)) |
-                    Some(&Token::BracketClose(_, _)) |
-                    Some(&Token::BraceClose(_, _)) => {
-                        self.buf.push(Symbol::Funct(0, val));
-                        return;
+                    // Definitly an atom
+                    Some(&Token::ParenClose(..)) |
+                    Some(&Token::BracketClose(..)) |
+                    Some(&Token::BraceClose(..)) => {
+                        self.buf.push(Symbol::Funct(0, name));
+                        Ok(prec)
                     }
 
                     // Possibly prefix operator
                     _ => {
-                        // TODO: Handle operator case
-                        self.buf.push(Symbol::Funct(0, val));
-                        return;
+                        match self.ops.get_prefix(name, prec) {
+                            Some(Op::FX(p, _)) => {
+                                self.read(p - 1)?;
+                                self.buf.push(Symbol::Funct(1, name));
+                                Ok(p)
+                            }
+                            Some(Op::FY(p, _)) => {
+                                self.read(p)?;
+                                self.buf.push(Symbol::Funct(1, name));
+                                Ok(p)
+                            }
+                            _ => {
+                                self.buf.push(Symbol::Funct(0, name));
+                                Ok(prec)
+                            }
+                        }
                     }
                 }
             }
 
-            None => return,
-            _ => panic!("parser does not support all tokens"), // TODO: cover all cases
-        }
-        return; // TODO: implement operator parsing
-    }
+            Some(Token::Str(.., val)) => {
+                self.buf.push(Symbol::Str(val.as_str()));
+                Ok(prec)
+            }
 
-    fn args(&mut self) -> u32 {
-        if let Some(Token::ParenOpen(_, _)) = self.inner.next() {
-            let mut arity = 1;
-            loop {
-                self.term(999);
-                match self.inner.next() {
-                    Some(Token::ParenClose(_, _)) => return arity,
-                    Some(Token::Comma(_, _)) => arity += 1,
-                    _ => panic!("expected comma in argument list"),
+            Some(Token::Var(.., val)) => {
+                match self.vars.iter().position(|name| *name == val) {
+                    Some(n) => {
+                        self.buf.push(Symbol::Var(n));
+                        Ok(prec)
+                    }
+                    None => {
+                        let n = self.vars.len();
+                        self.vars.push(val);
+                        self.buf.push(Symbol::Var(n));
+                        Ok(prec)
+                    }
                 }
             }
-        } else {
-            // `args` MUST NOT be called if the next token is not a paren.
-            unreachable!();
+
+            Some(Token::Int(.., val)) => {
+                self.buf.push(Symbol::Int(val));
+                Ok(prec)
+            }
+
+            Some(Token::Float(.., val)) => {
+                self.buf.push(Symbol::Float(val));
+                Ok(prec)
+            }
+
+            Some(Token::ParenOpen(line, col)) => {
+                self.read(1200)?;
+                match self.lexer.next() {
+                    Some(Token::ParenClose(..)) => Ok(prec),
+                    Some(Token::Err(line, col, err)) => syntax_error(line, col, err),
+                    _ => syntax_error(line, col, "unclosed paren"),
+                }
+            }
+
+            // TODO
+            Some(Token::BracketOpen(line, col)) => {
+                syntax_error(line, col, "lists are not yet supported")
+            }
+
+            // TODO
+            Some(Token::BraceOpen(line, col)) => {
+                syntax_error(line, col, "braces are not yet supported")
+            }
+
+            Some(Token::ParenClose(line, col)) => syntax_error(line, col, "unbalanced ')'"),
+            Some(Token::BracketClose(line, col)) => syntax_error(line, col, "unbalanced ']'"),
+            Some(Token::BraceClose(line, col)) => syntax_error(line, col, "unbalanced '}'"),
+            Some(Token::Dot(line, col)) => syntax_error(line, col, "unexpected period"),
+            Some(Token::Err(line, col, msg)) => syntax_error(line, col, msg),
+            None => syntax_error(0, 0, "unexpected eof"),
         }
+    }
+
+    /// Reads an argument list for a compound term or list.
+    /// TODO: support lists
+    fn read_args(&mut self) -> Result<u32> {
+        let front = self.lexer.next();
+        match front {
+            Some(Token::ParenOpen(..)) => (),
+            None => return syntax_error(0, 0, "unexpected eof"),
+            _ => panic!("must not call read_args in this context"),
+        }
+
+        let mut arity = 1;
+        loop {
+            self.read(999)?;
+            match self.lexer.next() {
+                Some(Token::ParenClose(..)) => return Ok(arity),
+                Some(Token::Comma(..)) => arity += 1,
+
+                Some(Token::Err(line, col, msg)) => return syntax_error(line, col, msg),
+                Some(tok) => {
+                    let msg = format!("expected comma between arguments, found '{}'", tok);
+                    return syntax_error(tok.line(), tok.col(), msg);
+                }
+                None => return syntax_error(0, 0, "unexpected eof"),
+            }
+        }
+    }
+}
+
+// SyntaxError
+// --------------------------------------------------
+
+fn syntax_error<T>(line: u32, col: u32, msg: T) -> Result<u32>
+    where T: Into<String>
+{
+    Err(SyntaxError {
+        line: line,
+        col: col,
+        msg: msg.into(),
+    })
+}
+
+impl<'a> fmt::Display for SyntaxError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}: {}", self.line, self.col, self.msg)
     }
 }
 
@@ -176,17 +323,71 @@ mod test {
     #[test]
     fn basic() {
         let ns = NameSpace::new();
-        let pl = "foo(bar, baz(123, 456.789), \"hello world\", X).\n";
-        let st = vec![Funct(4, ns.name("foo")),
-                      Funct(0, ns.name("bar")),
-                      Funct(2, ns.name("baz")),
+        let ops = OpTable::default(&ns);
+
+        let pl = "+foo(bar, baz(123, 456.789), \"hello world\", X).\n";
+        let st = vec![Funct(0, ns.name("bar")),
                       Int(123),
                       Float(456.789),
+                      Funct(2, ns.name("baz")),
                       Str("hello world"),
-                      Var(0)];
+                      Var(0),
+                      Funct(4, ns.name("foo")),
+                      Funct(1, ns.name("+"))];
         let st = unsafe { struct_from_vec(st) };
-        st.validate();
-        let mut parser = Parser::new(pl.chars(), &ns);
+
+        let mut parser = Parser::new(pl.chars(), &ns, &ops);
+        assert_eq!(parser.errs().count(), 0);
         assert_eq!(parser.next(), Some(st));
+    }
+
+    #[test]
+    fn basic_operators() {
+        let ns = NameSpace::new();
+        let ops = OpTable::default(&ns);
+
+        let pl = "a * b + c * d.\n";
+        let st = vec![Funct(0, ns.name("a")),
+                      Funct(0, ns.name("b")),
+                      Funct(2, ns.name("*")),
+                      Funct(0, ns.name("c")),
+                      Funct(0, ns.name("d")),
+                      Funct(2, ns.name("*")),
+                      Funct(2, ns.name("+"))];
+        let st = unsafe { struct_from_vec(st) };
+
+        let mut parser = Parser::new(pl.chars(), &ns, &ops);
+        assert_eq!(parser.next(), Some(st));
+        assert_eq!(parser.errs().count(), 0);
+    }
+
+    #[test]
+    fn realistic() {
+        let ns = NameSpace::new();
+        let ops = OpTable::default(&ns);
+
+        // TODO: update to list syntax
+        let pl = "member(H, list(H,T)).\n\
+                  member(X, list(_,T)) :- member(X, T).\n";
+
+        let first =
+            &[Var(0), Var(0), Var(1), Funct(2, ns.name("list")), Funct(2, ns.name("member"))];
+        let second = &[Var(0),
+                       Var(1),
+                       Var(2),
+                       Funct(2, ns.name("list")),
+                       Funct(2, ns.name("member")),
+                       Var(0),
+                       Var(2),
+                       Funct(2, ns.name("member")),
+                       Funct(2, ns.name(":-"))];
+
+        let mut parser = Parser::new(pl.chars(), &ns, &ops);
+
+        assert_eq!(parser.next().unwrap().as_slice(), first);
+        assert_eq!(parser.errs().count(), 0);
+
+        assert_eq!(parser.next().unwrap().as_slice(), second);
+        assert_eq!(parser.errs().count(), 0);
     }
 }
