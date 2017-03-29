@@ -325,7 +325,7 @@ mod test {
         let ns = NameSpace::new();
         let ops = OpTable::default(&ns);
 
-        let pl = "+foo(bar, baz(123, 456.789), \"hello world\", X).\n";
+        let pl = "-foo(bar, baz(123, 456.789), \"hello world\", X).\n";
         let st = vec![Funct(0, ns.name("bar")),
                       Int(123),
                       Float(456.789),
@@ -333,7 +333,7 @@ mod test {
                       Str("hello world"),
                       Var(0),
                       Funct(4, ns.name("foo")),
-                      Funct(1, ns.name("+"))];
+                      Funct(1, ns.name("-"))];
         let st = unsafe { struct_from_vec(st) };
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
