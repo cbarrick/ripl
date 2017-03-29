@@ -1,20 +1,22 @@
 use std::fmt;
-use std::iter::Fuse;
+use std::io::BufRead;
+
+use regex::Regex;
 
 use syntax::namespace::{NameSpace, Name};
 
-/// A lexer for Prolog source code.
+/// A lexer for logic programs.
 ///
 /// Implemented as an iterator over `Token`s.
-pub struct Lexer<'ns, I> {
-    inner: Fuse<I>,
-    ns: &'ns NameSpace,
+pub struct Lexer<'ns, B: BufRead> {
+    reader: B,
     buf: String,
-    line: u32,
-    col: u32,
+    ns: &'ns NameSpace,
+    line: usize,
+    col: usize,
 }
 
-/// A lexical item of Prolog.
+/// A lexical item of a logic program.
 ///
 /// Every `Token` includes its line and column as the first two members. When
 /// relevant, the third member gives an interpreted value of the token.
@@ -24,80 +26,78 @@ pub struct Lexer<'ns, I> {
 #[derive(Clone, Copy)]
 #[derive(PartialEq)]
 pub enum Token<'ns> {
-    Err(u32, u32, &'static str),
-    Funct(u32, u32, Name<'ns>),
-    Str(u32, u32, Name<'ns>),
-    Var(u32, u32, Name<'ns>),
-    Int(u32, u32, i64),
-    Float(u32, u32, f64),
-    ParenOpen(u32, u32),
-    ParenClose(u32, u32),
-    BracketOpen(u32, u32),
-    BracketClose(u32, u32),
-    BraceOpen(u32, u32),
-    BraceClose(u32, u32),
-    Bar(u32, u32, Name<'ns>),
-    Comma(u32, u32, Name<'ns>),
-    Dot(u32, u32),
+    Err(usize, usize, &'static str),
+    Funct(usize, usize, Name<'ns>),
+    Str(usize, usize, Name<'ns>),
+    Var(usize, usize, Name<'ns>),
+    Int(usize, usize, i64),
+    Float(usize, usize, f64),
+    ParenOpen(usize, usize),
+    ParenClose(usize, usize),
+    BracketOpen(usize, usize),
+    BracketClose(usize, usize),
+    BraceOpen(usize, usize),
+    BraceClose(usize, usize),
+    Bar(usize, usize, Name<'ns>),
+    Comma(usize, usize, Name<'ns>),
+    Dot(usize, usize),
+    Space(usize, usize),
+    Comment(usize, usize),
 }
+
+#[derive(Debug)]
+#[derive(Clone)]
+#[derive(PartialEq, Eq)]
+pub struct LexErr(usize, usize, String);
+
+pub type Result<T> = ::std::io::Result<T>;
 
 // Public API
 // --------------------------------------------------
 
-impl<'ns, I> Lexer<'ns, I>
-    where I: Iterator<Item = char>
-{
+impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// Constructs a new lexer from a stream of chars.
-    ///
-    /// The line and column counts both start at 1.
-    pub fn new(chars: I, ns: &'ns NameSpace) -> Lexer<'ns, I> {
+    pub fn new(reader: B, ns: &'ns NameSpace) -> Lexer<'ns, B> {
         Lexer {
-            inner: chars.fuse(),
+            reader: reader,
+            buf: String::with_capacity(128),
             ns: ns,
-            buf: String::with_capacity(32),
-            line: 1,
-            col: 1,
+            line: 0,
+            col: 0,
         }
     }
 }
 
-impl<'ns, I> Iterator for Lexer<'ns, I>
-    where I: Iterator<Item = char>
-{
+impl<'ns, B: BufRead> Iterator for Lexer<'ns, B> {
     type Item = Token<'ns>;
 
     /// Extracts the next token from the underlying stream.
     fn next(&mut self) -> Option<Token<'ns>> {
-        let next = self.buf.pop().or_else(|| self.inner.next());
-        match next {
-            Some('(') => self.lex_simple('('),
-            Some(')') => self.lex_simple(')'),
-            Some('[') => self.lex_simple('['),
-            Some(']') => self.lex_simple(']'),
-            Some('{') => self.lex_simple('{'),
-            Some('}') => self.lex_simple('}'),
-            Some(',') => self.lex_simple(','),
-            Some('|') => self.lex_simple('|'),
-            Some('.') => self.lex_simple('.'),
-            Some('%') => self.lex_comment(),
-            Some('_') => self.lex_var('_'),
-            Some('\'') => self.lex_quote('\''),
-            Some('\"') => self.lex_quote('\"'),
-            Some('-') => self.lex_minus(),
-            Some('0') => self.lex_zero(),
-            Some(ch) if ch.is_digit(10) => self.lex_decimal(ch),
-            Some(ch) if ch.is_whitespace() => self.lex_space(ch),
-            Some(ch) if ch.is_control() => self.lex_space(ch),
-            Some(ch) if ch.is_uppercase() => self.lex_var(ch),
-            Some(ch) => self.lex_functor(ch),
-            None => None,
+        if self.buf.len() == 0 {
+            match self.reader.read_line(&mut self.buf) {
+                Ok(0) => return None,
+                Ok(_) => (),
+                Err(e) => panic!(e),
+            }
+            self.line += 1;
+            self.col = 1;
+        }
+        let (tok, len) = self.lex(self.buf.as_str());
+        self.col += len;
+        self.buf.drain(..len);
+
+        // skip space and comments
+        match tok {
+            Token::Space(..) => self.next(),
+            Token::Comment(..) => self.next(),
+            _ => Some(tok),
         }
     }
 }
 
 impl<'ns> Token<'ns> {
     #[inline]
-    pub fn line(&self) -> u32 {
+    pub fn line(&self) -> usize {
         match *self {
             Token::Err(line, ..) => line,
             Token::Funct(line, ..) => line,
@@ -114,11 +114,13 @@ impl<'ns> Token<'ns> {
             Token::Bar(line, ..) => line,
             Token::Comma(line, ..) => line,
             Token::Dot(line, ..) => line,
+            Token::Space(line, ..) => line,
+            Token::Comment(line, ..) => line,
         }
     }
 
     #[inline]
-    pub fn col(&self) -> u32 {
+    pub fn col(&self) -> usize {
         match *self {
             Token::Err(_, col, _) => col,
             Token::Funct(_, col, _) => col,
@@ -135,6 +137,8 @@ impl<'ns> Token<'ns> {
             Token::Bar(_, col, _) => col,
             Token::Comma(_, col, _) => col,
             Token::Dot(_, col) => col,
+            Token::Space(_, col) => col,
+            Token::Comment(_, col) => col,
         }
     }
 }
@@ -157,416 +161,236 @@ impl<'ns> fmt::Display for Token<'ns> {
             Token::Bar(..) => f.write_str("|"),
             Token::Comma(..) => f.write_str(","),
             Token::Dot(..) => f.write_str("."),
+            Token::Space(..) => f.write_str("SPACE"),
+            Token::Comment(..) => f.write_str("COMMENT"),
         }
     }
 }
 
 // Lexing Logic
 // --------------------------------------------------
-// This impl gives the various private lexing routines.
-//
-// When these functions are called, the first character of the token has
-// already been read from the underlying stream. When appropriate, the first
-// character is passed as an argument.
-//
-// The functions may use the buffer as scratch space to build a token string.
-// The buffer is guarenteed to be empty when the functions are called. The
-// functions MUST clear the buffer before returning. If a function reads past
-// its token, it may write a single character to the buffer after it is
-// cleared. In this case, that character is treated as the first character of
-// the next token.
 
-impl<'ns, I> Lexer<'ns, I>
-    where I: Iterator<Item = char>
-{
-    /// Returns the token for a simple function symbol.
-    fn lex_functor(&mut self, first: char) -> Option<Token<'ns>> {
-        if is_symbolic(first) {
-            return self.lex_symbolic(first);
-        }
-
-        let line = self.line;
-        let col = self.col;
-        self.buf.push(first); // assume first char is valid
-        loop {
-            match self.inner.next() {
-                Some('_') => {
-                    self.buf.push('_');
-                }
-                Some(ch) if ch.is_alphanumeric() => {
-                    self.buf.push(ch);
-                }
-                Some(ch) => {
-                    let tok = Token::Funct(line, col, self.get_name());
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    self.buf.push(ch);
-                    return Some(tok);
-                }
-                None => {
-                    let tok = Token::Funct(line, col, self.get_name());
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    return Some(tok);
-                }
-            }
+impl<'ns, B: BufRead> Lexer<'ns, B> {
+    fn lex(&self, line: &str) -> (Token<'ns>, usize) {
+        match line.chars().nth(0) {
+            Some('(') => self.lex_simple(line),
+            Some(')') => self.lex_simple(line),
+            Some('[') => self.lex_simple(line),
+            Some(']') => self.lex_simple(line),
+            Some('{') => self.lex_simple(line),
+            Some('}') => self.lex_simple(line),
+            Some(',') => self.lex_simple(line),
+            Some('|') => self.lex_simple(line),
+            Some('.') => self.lex_simple(line),
+            Some('%') => self.lex_comment(line),
+            Some('_') => self.lex_var(line),
+            Some('\'') => self.lex_quote(line),
+            Some('\"') => self.lex_quote(line),
+            Some('-') => self.lex_minus(line),
+            Some('0') => self.lex_zero(line),
+            Some(ch) if ch.is_digit(10) => self.lex_decimal(line),
+            Some(ch) if ch.is_whitespace() => self.lex_space(line),
+            Some(ch) if ch.is_control() => self.lex_space(line),
+            Some(ch) if ch.is_uppercase() => self.lex_var(line),
+            Some(_) => self.lex_functor(line),
+            None => panic!(),
         }
     }
 
-    /// Returns the token for a function symbol starting with a symbolic char.
-    fn lex_symbolic(&mut self, first: char) -> Option<Token<'ns>> {
-        let line = self.line;
-        let col = self.col;
-        self.buf.push(first); // assume first char is valid
-        loop {
-            match self.inner.next() {
-                Some('_') => {
-                    self.buf.push('_');
-                }
-                Some(ch) if is_symbolic(ch) => {
-                    self.buf.push(ch);
-                }
-                Some(ch) => {
-                    let tok = Token::Funct(line, col, self.get_name());
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    self.buf.push(ch);
-                    return Some(tok);
-                }
-                None => {
-                    let tok = Token::Funct(line, col, self.get_name());
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    return Some(tok);
-                }
-            }
+    /// Returns the token for a simple function symbol.
+    fn lex_functor(&self, line: &str) -> (Token<'ns>, usize) {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"^(\w+|[\p{S}\p{Pc}\p{Pd}\p{Po}]+)").unwrap();
         }
+
+        let m = RE.find(line).unwrap();
+        let s = m.as_str();
+        let tok = Token::Funct(self.line, self.col, self.ns.name(s));
+        (tok, s.len())
     }
 
     /// Returns the token for a variable term.
-    fn lex_var(&mut self, first: char) -> Option<Token<'ns>> {
-        let line = self.line;
-        let col = self.col;
-        self.buf.push(first); // assume first char is valid
-        loop {
-            match self.inner.next() {
-                Some('_') => {
-                    self.buf.push('_');
-                }
-                Some(ch) if ch.is_alphanumeric() => {
-                    self.buf.push(ch);
-                }
-                Some(ch) => {
-                    let tok = Token::Var(line, col, self.get_name());
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    self.buf.push(ch);
-                    return Some(tok);
-                }
-                None => {
-                    let tok = Token::Var(line, col, self.get_name());
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    return Some(tok);
-                }
-            }
+    fn lex_var(&self, line: &str) -> (Token<'ns>, usize) {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"^[_\p{Lu}]\w*").unwrap();
         }
+
+        let m = RE.find(line).unwrap();
+        let s = m.as_str();
+        let tok = Token::Var(self.line, self.col, self.ns.name(s));
+        (tok, s.len())
     }
 
     /// Returns the token for a symbol starting with a minus.
-    fn lex_minus(&mut self) -> Option<Token<'ns>> {
-        let line = self.line;
-        let col = self.col;
-        self.buf.push('-');
-        match self.inner.next() {
-            Some('0') => self.lex_zero(),
-            Some(ch) if ch.is_digit(10) => self.lex_decimal(ch),
-            Some(ch) if is_symbolic(ch) => self.lex_functor(ch),
-            Some(ch) => {
-                let tok = Token::Funct(line, col, self.get_name());
-                self.col += self.buf.len() as u32;
-                self.buf.clear();
-                self.buf.push(ch);
-                Some(tok)
+    fn lex_minus(&self, line: &str) -> (Token<'ns>, usize) {
+        let mut len = 0;
+        let tok = match line.chars().nth(1) {
+            Some('0') => {
+                let (subtok, sublen) = self.lex_zero(&line[1..]);
+                len += 1 + sublen;
+                match subtok {
+                    Token::Int(_, _, val) => Token::Int(self.line, self.col, -val),
+                    Token::Float(_, _, val) => Token::Float(self.line, self.col, -val),
+                    _ => unreachable!("lex_zero must return a numeric token"),
+                }
             }
-            None => {
-                let tok = Token::Funct(line, col, self.get_name());
-                self.col += self.buf.len() as u32;
-                self.buf.clear();
-                Some(tok)
+            Some(ch) if ch.is_digit(10) => {
+                let (subtok, sublen) = self.lex_decimal(&line[1..]);
+                len += 1 + sublen;
+                match subtok {
+                    Token::Int(_, _, val) => Token::Int(self.line, self.col, -val),
+                    Token::Float(_, _, val) => Token::Float(self.line, self.col, -val),
+                    _ => unreachable!("lex_zero must return a numeric token"),
+                }
             }
-        }
+            Some(ch) if is_symbolic(ch) => {
+                return self.lex_functor(line);
+            }
+            _ => {
+                len += 1;
+                Token::Funct(self.line, self.col, self.ns.name("-"))
+            }
+        };
+        (tok, len)
     }
 
     /// Returns the token for a binary, octal, hexidecimal, or decimal number.
-    fn lex_zero(&mut self) -> Option<Token<'ns>> {
-        let line = self.line;
-        let col = self.col;
+    fn lex_zero(&self, line: &str) -> (Token<'ns>, usize) {
+        let mut len = 0;
+
+        // We know the first char is '0'. The second char gives the radix.
+        // If base 10, jump to `self.lex_decimal`.
         let radix: u32;
-        self.buf.push('0');
-        match self.inner.next() {
+        match line.chars().nth(1) {
             Some('x') => radix = 16,
             Some('o') => radix = 8,
             Some('b') => radix = 2,
-            Some('.') => return self.lex_decimal('.'),
-            Some(ch) if ch.is_digit(10) => return self.lex_decimal(ch),
-            Some(ch) => {
-                self.col += 1;
-                self.buf.push(ch);
-                return Some(Token::Int(line, col, 0));
-            }
-            None => {
-                self.col += 1;
-                return Some(Token::Int(line, col, 0));
+            Some('.') => return self.lex_decimal(line),
+            Some(ch) if ch.is_digit(10) => return self.lex_decimal(line),
+            _ => return (Token::Int(self.line, self.col, 0), 1),
+        }
+        len += 2;
+
+        // Buffer up all chars in the given radix.
+        let mut buf = String::with_capacity(32);
+        for ch in line[2..].chars() {
+            match ch {
+                ch if ch.is_digit(radix) => {
+                    len += ch.len_utf8();
+                    buf.push(ch);
+                }
+                _ => break,
             }
         }
 
-        // we don't add the radix char ('x', 'o', or 'b') to the buffer,
-        // but we still need to adjust the column count.
-        self.col += 1;
-
-        loop {
-            match self.inner.next() {
-                Some(ch) if ch.is_digit(radix) => self.buf.push(ch),
-                Some(ch) => {
-                    let tok = match i64::from_str_radix(self.buf.as_str(), radix) {
-                        Ok(x) => Token::Int(line, col, x),
-                        Err(_) => Token::Err(line, col, "cannot parse number"),
-                    };
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    self.buf.push(ch);
-                    return Some(tok);
-                }
-                None => {
-                    let tok = match i64::from_str_radix(self.buf.as_str(), radix) {
-                        Ok(x) => Token::Int(line, col, x),
-                        Err(_) => Token::Err(line, col, "cannot parse number"),
-                    };
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    return Some(tok);
-                }
-            }
-        }
+        // Parse the buffer into an integer.
+        let tok = match i64::from_str_radix(buf.as_str(), radix) {
+            Ok(x) => Token::Int(self.line, self.col, x),
+            Err(_) => unreachable!("the buffer must be valid in the given radix"),
+        };
+        (tok, len)
     }
 
     /// Returns the token for a decimal number.
-    fn lex_decimal(&mut self, first: char) -> Option<Token<'ns>> {
-        let line = self.line;
-        let col = self.col;
-        let mut seen_dot = first == '.';
-        let mut seen_e = false;
-        self.buf.push(first);
-        loop {
-            match self.inner.next() {
-                Some(ch) if ch.is_digit(10) => self.buf.push(ch),
-                Some('_') => self.buf.push('_'),
-                Some('.') => {
-                    if seen_dot {
-                        let tok = match self.buf.parse::<f64>() {
-                            Ok(x) => Token::Float(line, col, x),
-                            Err(_) => Token::Err(line, col, "cannot parse number"),
-                        };
-                        self.col += self.buf.len() as u32;
-                        self.buf.clear();
-                        self.buf.push('.');
-                        return Some(tok);
-                    }
-                    self.buf.push('.');
-                    seen_dot = true;
-                }
-                Some('e') => {
-                    if seen_e {
-                        let tok = match self.buf.parse::<f64>() {
-                            Ok(x) => Token::Float(line, col, x),
-                            Err(_) => Token::Err(line, col, "cannot parse number"),
-                        };
-                        self.col += self.buf.len() as u32;
-                        self.buf.clear();
-                        self.buf.push('e');
-                        return Some(tok);
-                    }
-                    self.buf.push('e');
-                    seen_dot = true;
-                    seen_e = true;
-                    match self.inner.next() {
-                        Some('-') => self.buf.push('-'),
-                        Some(ch) if ch.is_digit(10) => self.buf.push(ch),
-                        Some(ch) => {
-                            let tok = match self.buf.parse::<f64>() {
-                                Ok(x) => Token::Float(line, col, x),
-                                Err(_) => Token::Err(line, col, "cannot parse number"),
-                            };
-                            self.col += self.buf.len() as u32;
-                            self.buf.clear();
-                            self.buf.push(ch);
-                            return Some(tok);
-                        }
-                        None => {
-                            let tok = match self.buf.parse::<f64>() {
-                                Ok(x) => Token::Float(line, col, x),
-                                Err(_) => Token::Err(line, col, "cannot parse number"),
-                            };
-                            self.col += self.buf.len() as u32;
-                            self.buf.clear();
-                            return Some(tok);
-                        }
-                    }
-                }
-                Some(ch) => {
-                    let tok = if seen_dot {
-                        match self.buf.parse::<f64>() {
-                            Ok(x) => Token::Float(line, col, x),
-                            Err(_) => Token::Err(line, col, "cannot parse number"),
-                        }
-                    } else {
-                        match self.buf.parse::<i64>() {
-                            Ok(x) => Token::Int(line, col, x),
-                            Err(_) => Token::Err(line, col, "cannot parse number"),
-                        }
-                    };
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    self.buf.push(ch);
-                    return Some(tok);
-                }
-                None => {
-                    let tok = if seen_dot {
-                        match self.buf.parse::<f64>() {
-                            Ok(x) => Token::Float(line, col, x),
-                            Err(_) => Token::Err(line, col, "cannot parse number"),
-                        }
-                    } else {
-                        match self.buf.parse::<i64>() {
-                            Ok(x) => Token::Int(line, col, x),
-                            Err(_) => Token::Err(line, col, "cannot parse number"),
-                        }
-                    };
-                    self.col += self.buf.len() as u32;
-                    self.buf.clear();
-                    return Some(tok);
-                }
-            }
+    fn lex_decimal(&self, line: &str) -> (Token<'ns>, usize) {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"^\d+(\.\d+)?(e-?\d+)?").unwrap();
         }
-    }
 
-    /// Retuns a token giving the text of a comment.
-    fn lex_comment(&mut self) -> Option<Token<'ns>> {
-        while let Some(ch) = self.inner.next() {
-            if ch == '\n' {
-                break;
-            }
-        }
-        self.line += 1;
-        self.col = 1;
-        self.next()
+        let m = RE.find(line).unwrap();
+        let s = m.as_str();
+        let float = s.chars().any(|ch| ch == 'e' || ch == '.');
+        let tok = match float {
+            true => Token::Float(self.line, self.col, s.parse().unwrap()),
+            false => Token::Int(self.line, self.col, s.parse().unwrap()),
+        };
+        (tok, s.len())
     }
 
     /// Returns a Functor or String for a token enclosed in quotes.
     ///
     /// Escape sequences are replaced and the token will not include the
-    /// surrounding quotes. An Err token is returned if the quote is unclosed.
-    fn lex_quote(&mut self, quote: char) -> Option<Token<'ns>> {
-        let line = self.line;
-        let col = self.col;
-        self.col += 1;
-        loop {
-            match self.inner.next() {
-                Some('\\') => {
-                    self.col += 2;
-                    match self.inner.next() {
-                        Some('n') => self.buf.push('\n'),
-                        Some('r') => self.buf.push('\r'),
-                        Some('t') => self.buf.push('\t'),
-                        Some('\\') => self.buf.push('\\'),
-                        Some(ch) => self.buf.push(ch),
-                        None => {
-                            self.buf.clear();
-                            return Some(Token::Err(line, col, "unclosed quote"));
-                        }
-                    };
+    /// surrounding quotes. An error is returned if the quote is unclosed.
+    fn lex_quote(&self, line: &str) -> (Token<'ns>, usize) {
+        let quote = line.chars().nth(0).unwrap();
+        let mut buf = String::with_capacity(32);
+        let mut escape = false;
+        let mut ok = false;
+        for ch in line.chars().skip(1) {
+            if escape {
+                match ch {
+                    'n' => buf.push('\n'),
+                    'r' => buf.push('\r'),
+                    't' => buf.push('\t'),
+                    '\\' => buf.push('\\'),
+                    ch => buf.push(ch),
                 }
-                Some('\n') => {
-                    self.col = 1;
-                    self.line += 1;
-                    self.buf.push('\n');
-                }
-                Some(ch) if ch == quote => {
-                    self.col += 1;
-                    let tok = match quote {
-                        '\"' => Token::Str(line, col, self.get_name()),
-                        '\'' => Token::Funct(line, col, self.get_name()),
-                        _ => panic!("unsupported quote"),
-                    };
-                    self.buf.clear();
-                    return Some(tok);
-                }
-                Some(ch) => {
-                    self.col += 1;
-                    self.buf.push(ch);
-                }
-                None => {
-                    self.buf.clear();
-                    return Some(Token::Err(self.line, self.col, "unclosed quote"));
+                escape = false;
+            } else {
+                match ch {
+                    '\\' => escape = true,
+                    ch if ch == quote => {
+                        ok = true;
+                        break;
+                    }
+                    ch => buf.push(ch),
                 }
             }
         }
+
+        let len = buf.len() + 2;
+        let tok = match ok {
+            true if quote == '\"' => Token::Str(self.line, self.col, self.ns.name(buf)),
+            true => Token::Funct(self.line, self.col, self.ns.name(buf)),
+            false => Token::Err(self.line, self.col, "unclosed quote"),
+        };
+        (tok, len)
     }
 
     /// Returns the token for a single char symbol.
-    fn lex_simple(&mut self, ch: char) -> Option<Token<'ns>> {
-        let line = self.line;
-        let col = self.col;
-        self.col += 1;
-        match ch {
-            '(' => Some(Token::ParenOpen(line, col)),
-            ')' => Some(Token::ParenClose(line, col)),
-            '[' => Some(Token::BracketOpen(line, col)),
-            ']' => Some(Token::BracketClose(line, col)),
-            '{' => Some(Token::BraceOpen(line, col)),
-            '}' => Some(Token::BraceClose(line, col)),
-            ',' => Some(Token::Comma(line, col, self.ns.name(","))),
-            '|' => Some(Token::Bar(line, col, self.ns.name("|"))),
-            '.' => Some(Token::Dot(line, col)),
-            _ => panic!("lex_simple called without a grouping symbol"),
-        }
+    fn lex_simple(&self, line: &str) -> (Token<'ns>, usize) {
+        let tok = match line.chars().nth(0).unwrap() {
+            '(' => Token::ParenOpen(self.line, self.col),
+            ')' => Token::ParenClose(self.line, self.col),
+            '[' => Token::BracketOpen(self.line, self.col),
+            ']' => Token::BracketClose(self.line, self.col),
+            '{' => Token::BraceOpen(self.line, self.col),
+            '}' => Token::BraceClose(self.line, self.col),
+            ',' => Token::Comma(self.line, self.col, self.ns.name(",")),
+            '|' => Token::Bar(self.line, self.col, self.ns.name("|")),
+            '.' => Token::Dot(self.line, self.col),
+            _ => unreachable!("lex_simple must be called with a simple character"),
+        };
+        (tok, 1)
     }
 
-    /// Skips whitespace/control characters and returns the next token.
-    fn lex_space(&mut self, first: char) -> Option<Token<'ns>> {
-        let mut ch = Some(first);
-        loop {
-            match ch {
-                Some('\n') => {
-                    self.line += 1;
-                    self.col = 1;
-                }
-                Some(ch) if ch.is_whitespace() || ch.is_control() => {
-                    self.col += 1;
-                }
-                Some(ch) => {
-                    self.buf.push(ch);
-                    return self.next();
-                }
-                None => return None,
-            };
-            ch = self.inner.next();
+    /// Returns the next whitespace token.
+    fn lex_space(&self, line: &str) -> (Token<'ns>, usize) {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"^[\s\p{C}]+").unwrap();
         }
+
+        let m = RE.find(line).unwrap();
+        let s = m.as_str();
+        let tok = Token::Space(self.line, self.col);
+        (tok, s.len())
+    }
+
+    /// Retuns a token giving the text of a comment.
+    fn lex_comment(&self, line: &str) -> (Token<'ns>, usize) {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"^%.*").unwrap();
+        }
+
+        let m = RE.find(line).unwrap();
+        let s = m.as_str();
+        let tok = Token::Space(self.line, self.col);
+        (tok, s.len())
     }
 }
 
 // Helpers
 // --------------------------------------------------
-
-impl<'ns, I> Lexer<'ns, I>
-    where I: Iterator<Item = char>
-{
-    /// Converts the buffer to a `Name`.
-    fn get_name(&mut self) -> Name<'ns> {
-        self.ns.name(self.buf.clone())
-    }
-}
 
 fn is_special(ch: char) -> bool {
     "\'\",.|%{[()]}".contains(ch)
@@ -593,7 +417,7 @@ mod test {
                   -> -0xff -1.23 (-)\n\
                   \t\t   \t\n";
         let ns = NameSpace::new();
-        let mut toks = Lexer::new(pl.chars(), &ns);
+        let mut toks = Lexer::new(pl.as_bytes(), &ns);
         assert_eq!(toks.next().unwrap(), Token::Var(1, 1, ns.name("_abcd")));
         assert_eq!(toks.next().unwrap(), Token::Var(1, 7, ns.name("ABCD")));
         assert_eq!(toks.next().unwrap(), Token::Funct(1, 12, ns.name("foobar")));
@@ -623,7 +447,7 @@ mod test {
         let pl = "member(H, [H|T]).\n\
                   member(X, [_|T]) :- member(X, T).\n";
         let ns = NameSpace::new();
-        let mut toks = Lexer::new(pl.chars(), &ns);
+        let mut toks = Lexer::new(pl.as_bytes(), &ns);
 
         // member(H, [H|T]).
         assert_eq!(toks.next().unwrap(), Token::Funct(1, 1, ns.name("member")));

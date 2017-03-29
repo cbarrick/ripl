@@ -15,6 +15,7 @@
 //! [2]: https://en.wikipedia.org/wiki/Operator-precedence_parser
 
 use std::fmt;
+use std::io::BufRead;
 use std::iter::Peekable;
 use std::mem;
 use std::vec::Drain;
@@ -32,11 +33,9 @@ use repr::{Structure, Symbol};
 ///
 /// A `Parser` maintains a list of encountered syntax errors. If this list is
 /// non-empty, then the structures emitted cannot be assumed to be valid.
-pub struct Parser<'a, I>
-    where I: Iterator<Item = char>
-{
+pub struct Parser<'a, B: BufRead> {
     ops: &'a OpTable<'a>,
-    lexer: Peekable<Lexer<'a, I>>,
+    lexer: Peekable<Lexer<'a, B>>,
     errs: Vec<SyntaxError>,
     vars: Vec<Name<'a>>,
     buf: Vec<Symbol<'a>>,
@@ -48,8 +47,8 @@ pub struct Parser<'a, I>
 #[derive(PartialEq, Eq)]
 #[derive(PartialOrd, Ord)]
 pub struct SyntaxError {
-    pub line: u32,
-    pub col: u32,
+    pub line: usize,
+    pub col: usize,
     pub msg: String,
 }
 
@@ -59,13 +58,11 @@ pub type Result<T> = ::std::result::Result<T, SyntaxError>;
 // Public API
 // --------------------------------------------------
 
-impl<'a, I> Parser<'a, I>
-    where I: Iterator<Item = char>
-{
-    pub fn new(chars: I, ns: &'a NameSpace, ops: &'a OpTable<'a>) -> Parser<'a, I> {
+impl<'a, B: BufRead> Parser<'a, B> {
+    pub fn new(reader: B, ns: &'a NameSpace, ops: &'a OpTable<'a>) -> Parser<'a, B> {
         Parser {
             ops: ops,
-            lexer: Lexer::new(chars, ns).peekable(),
+            lexer: Lexer::new(reader, ns).peekable(),
             errs: Vec::new(),
             vars: Vec::with_capacity(32),
             buf: Vec::with_capacity(256),
@@ -77,10 +74,9 @@ impl<'a, I> Parser<'a, I>
     }
 }
 
-impl<'a, I> Iterator for Parser<'a, I>
-    where I: Iterator<Item = char>
-{
+impl<'a, B: BufRead> Iterator for Parser<'a, B> {
     type Item = Box<Structure<'a>>;
+
     fn next(&mut self) -> Option<Box<Structure<'a>>> {
         self.vars.clear();
         self.buf.clear();
@@ -121,9 +117,7 @@ unsafe fn struct_from_vec<'a>(vec: Vec<Symbol<'a>>) -> Box<Structure<'a>> {
     mem::transmute(vec.into_boxed_slice())
 }
 
-impl<'a, I> Parser<'a, I>
-    where I: Iterator<Item = char>
-{
+impl<'a, B: BufRead> Parser<'a, B> {
     /// Reads the next term up to, but not including, the trailing period.
     ///
     /// The return value is the precedence of the term upon success
@@ -166,6 +160,11 @@ impl<'a, I> Parser<'a, I>
     /// Reads the left side of an infix operator at a given precedence.
     fn read_primary(&mut self, prec: u32) -> Result<u32> {
         match self.lexer.next() {
+            Some(Token::Space(..)) |
+            Some(Token::Comment(..)) => {
+                return self.read_primary(prec);
+            }
+
             Some(Token::Bar(.., name)) |
             Some(Token::Comma(.., name)) |
             Some(Token::Funct(.., name)) => {
@@ -296,7 +295,7 @@ impl<'a, I> Parser<'a, I>
 // SyntaxError
 // --------------------------------------------------
 
-fn syntax_error<T>(line: u32, col: u32, msg: T) -> Result<u32>
+fn syntax_error<T>(line: usize, col: usize, msg: T) -> Result<u32>
     where T: Into<String>
 {
     Err(SyntaxError {
@@ -336,7 +335,7 @@ mod test {
                       Funct(1, ns.name("+"))];
         let st = unsafe { struct_from_vec(st) };
 
-        let mut parser = Parser::new(pl.chars(), &ns, &ops);
+        let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
         assert_eq!(parser.errs().count(), 0);
         assert_eq!(parser.next(), Some(st));
     }
@@ -356,7 +355,7 @@ mod test {
                       Funct(2, ns.name("+"))];
         let st = unsafe { struct_from_vec(st) };
 
-        let mut parser = Parser::new(pl.chars(), &ns, &ops);
+        let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
         assert_eq!(parser.next(), Some(st));
         assert_eq!(parser.errs().count(), 0);
     }
@@ -382,7 +381,7 @@ mod test {
                        Funct(2, ns.name("member")),
                        Funct(2, ns.name(":-"))];
 
-        let mut parser = Parser::new(pl.chars(), &ns, &ops);
+        let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
 
         assert_eq!(parser.next().unwrap().as_slice(), first);
         assert_eq!(parser.errs().count(), 0);

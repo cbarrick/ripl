@@ -4,4 +4,6 @@ version = "0.1.0-master"
 authors = ["Chris Barrick <cbarrick1@gmail.com>"]
 
 [dependencies]
-rand = "0.3"
+rand = "^0.3"
+regex = "^0.2"
+lazy_static = "^0.2"
