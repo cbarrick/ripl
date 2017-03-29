@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::BufRead;
-
 use regex::Regex;
+use unicode_normalization::UnicodeNormalization;
 
 use syntax::namespace::{NameSpace, Name};
 
@@ -14,6 +14,7 @@ pub struct Lexer<'ns, B: BufRead> {
     ns: &'ns NameSpace,
     line: usize,
     col: usize,
+    skip_space: bool,
 }
 
 /// A lexical item of a logic program.
@@ -57,45 +58,66 @@ pub type Result<T> = ::std::io::Result<T>;
 
 impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// Constructs a new lexer from a stream of chars.
-    pub fn new(reader: B, ns: &'ns NameSpace) -> Lexer<'ns, B> {
+    ///
+    /// By default, the lexer is configured to skip space and comment tokens.
+    /// See the `report_space` method for more information.
+    pub fn new(reader: B, ns: &'ns NameSpace) -> Self {
         Lexer {
             reader: reader,
             buf: String::with_capacity(128),
             ns: ns,
             line: 0,
             col: 0,
+            skip_space: true,
         }
+    }
+
+    /// Toggles whether space and comment tokens are reported.
+    ///
+    /// This method is intended to be used as a "builder" function and thus
+    /// takes and returns ownership of `self`.
+    pub fn report_space(mut self, yes: bool) -> Self {
+        self.skip_space = yes;
+        self
     }
 }
 
 impl<'ns, B: BufRead> Iterator for Lexer<'ns, B> {
     type Item = Token<'ns>;
 
-    /// Extracts the next token from the underlying stream.
+    /// Extracts the next token from the underlying reader.
     fn next(&mut self) -> Option<Token<'ns>> {
+        // Refill the buffer.
         if self.buf.len() == 0 {
             match self.reader.read_line(&mut self.buf) {
-                Ok(0) => return None,
-                Ok(_) => (),
-                Err(e) => panic!(e),
+                Ok(0) => return None, // Nothing more to read
+                Ok(_) => (),          // The buffer is refilled successfully
+                Err(e) => panic!(e),  // TODO: I/O errors shouldn't panic
             }
             self.line += 1;
             self.col = 1;
+
+            // Perform Unicode normalization.
+            // This has security, usability, and performance implications.
+            self.buf = self.buf.nfkc().collect();
         }
+
+        // Lex the next token.
         let (tok, len) = self.lex(self.buf.as_str());
         self.col += len;
         self.buf.drain(..len);
 
-        // skip space and comments
+        // Skip space and comment tokens.
         match tok {
-            Token::Space(..) => self.next(),
-            Token::Comment(..) => self.next(),
+            Token::Space(..) if self.skip_space => self.next(),
+            Token::Comment(..) if self.skip_space => self.next(),
             _ => Some(tok),
         }
     }
 }
 
 impl<'ns> Token<'ns> {
+    /// Returns the line number of the start of the token.
     #[inline]
     pub fn line(&self) -> usize {
         match *self {
@@ -119,6 +141,7 @@ impl<'ns> Token<'ns> {
         }
     }
 
+    /// Returns the column number of the start of the token.
     #[inline]
     pub fn col(&self) -> usize {
         match *self {
@@ -161,6 +184,8 @@ impl<'ns> fmt::Display for Token<'ns> {
             Token::Bar(..) => f.write_str("|"),
             Token::Comma(..) => f.write_str(","),
             Token::Dot(..) => f.write_str("."),
+
+            // TODO: Space and Comment should report their content.
             Token::Space(..) => f.write_str("SPACE"),
             Token::Comment(..) => f.write_str("COMMENT"),
         }
@@ -171,48 +196,68 @@ impl<'ns> fmt::Display for Token<'ns> {
 // --------------------------------------------------
 
 impl<'ns, B: BufRead> Lexer<'ns, B> {
+    /// The main switch of the lexer.
     fn lex(&self, line: &str) -> (Token<'ns>, usize) {
-        match line.chars().nth(0) {
-            Some('(') => self.lex_simple(line),
-            Some(')') => self.lex_simple(line),
-            Some('[') => self.lex_simple(line),
-            Some(']') => self.lex_simple(line),
-            Some('{') => self.lex_simple(line),
-            Some('}') => self.lex_simple(line),
-            Some(',') => self.lex_simple(line),
-            Some('|') => self.lex_simple(line),
-            Some('.') => self.lex_simple(line),
-            Some('%') => self.lex_comment(line),
-            Some('_') => self.lex_var(line),
-            Some('\'') => self.lex_quote(line),
-            Some('\"') => self.lex_quote(line),
-            Some('-') => self.lex_minus(line),
-            Some('0') => self.lex_zero(line),
-            Some(ch) if ch.is_digit(10) => self.lex_decimal(line),
-            Some(ch) if ch.is_whitespace() => self.lex_space(line),
-            Some(ch) if ch.is_control() => self.lex_space(line),
-            Some(ch) if ch.is_uppercase() => self.lex_var(line),
-            Some(_) => self.lex_functor(line),
-            None => panic!(),
+        match line.chars().nth(0).unwrap() {
+            '(' => self.lex_simple(line),
+            ')' => self.lex_simple(line),
+            '[' => self.lex_simple(line),
+            ']' => self.lex_simple(line),
+            '{' => self.lex_simple(line),
+            '}' => self.lex_simple(line),
+            ',' => self.lex_simple(line),
+            '|' => self.lex_simple(line),
+            '.' => self.lex_simple(line),
+            '%' => self.lex_comment(line),
+            '_' => self.lex_var(line),
+            '\'' => self.lex_quote(line),
+            '\"' => self.lex_quote(line),
+            '-' => self.lex_minus(line),
+            '0' => self.lex_zero(line),
+            ch if ch.is_digit(10) => self.lex_decimal(line),
+            ch if ch.is_whitespace() => self.lex_space(line),
+            ch if ch.is_control() => self.lex_space(line),
+            ch if ch.is_uppercase() => self.lex_var(line),
+            _ => self.lex_functor(line),
         }
     }
 
-    /// Returns the token for a simple function symbol.
+    /// Returns the token for the next function symbol.
+    ///
+    /// Function symbols are composed of either only alphanumeric characters
+    /// and underscores or only symbols and punctuation. Function symbols may
+    /// not start with a capital or underscore (though this is not checked).
+    ///
+    /// Commas, periods, and pipes are not allowed within other function
+    /// symbols.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_functor(&self, line: &str) -> (Token<'ns>, usize) {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"^(\w+|[\p{S}\p{Pc}\p{Pd}\p{Po}]+)").unwrap();
+            static ref RE: Regex = {
+                let pattern = r"^([\w\d]+|[\p{S}\p{Pc}\p{Pd}\p{Po}]+)";
+                Regex::new(pattern).unwrap()
+            };
         }
 
         let m = RE.find(line).unwrap();
-        let s = m.as_str();
+        let s = m.as_str().split(|ch| ch == ',' || ch == '.' || ch == '|').nth(0).unwrap();
         let tok = Token::Funct(self.line, self.col, self.ns.name(s));
         (tok, s.len())
     }
 
     /// Returns the token for a variable term.
+    ///
+    /// Variables start with a capital letter or underscore and are composed
+    /// only of letters and underscores.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_var(&self, line: &str) -> (Token<'ns>, usize) {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"^[_\p{Lu}]\w*").unwrap();
+            static ref RE: Regex = {
+                let pattern = r"^[\p{Lu}_][\w\d]*";
+                Regex::new(pattern).unwrap()
+            };
         }
 
         let m = RE.find(line).unwrap();
@@ -222,6 +267,10 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     }
 
     /// Returns the token for a symbol starting with a minus.
+    ///
+    /// A minus can start both numeric and function symbol tokens.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_minus(&self, line: &str) -> (Token<'ns>, usize) {
         let mut len = 0;
         let tok = match line.chars().nth(1) {
@@ -243,18 +292,20 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                     _ => unreachable!("lex_zero must return a numeric token"),
                 }
             }
-            Some(ch) if is_symbolic(ch) => {
-                return self.lex_functor(line);
-            }
-            _ => {
-                len += 1;
-                Token::Funct(self.line, self.col, self.ns.name("-"))
-            }
+            _ => return self.lex_functor(line),
         };
         (tok, len)
     }
 
-    /// Returns the token for a binary, octal, hexidecimal, or decimal number.
+    /// Returns the token for a number with a leading zero.
+    ///
+    /// This routine uses the second character to dertermine the radix:
+    /// - 'x' for hexadecimal
+    /// - 'o' for octal
+    /// - 'b' for binary
+    /// - otherwise decimal is assumed
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_zero(&self, line: &str) -> (Token<'ns>, usize) {
         let mut len = 0;
 
@@ -292,9 +343,19 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     }
 
     /// Returns the token for a decimal number.
+    ///
+    /// Numbers follow the standard scientific notation and are allowed to be
+    /// broken up arbitrarily by underscores.
+    ///
+    /// This routine does not handle leading signs. See `lex_minus`.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_decimal(&self, line: &str) -> (Token<'ns>, usize) {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"^\d+(\.\d+)?(e-?\d+)?").unwrap();
+            static ref RE: Regex = {
+                let pattern = r"^\d[\d_]*(\.[\d_]+)?(e-?[\d_]+)?";
+                Regex::new(pattern).unwrap()
+            };
         }
 
         let m = RE.find(line).unwrap();
@@ -307,10 +368,12 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         (tok, s.len())
     }
 
-    /// Returns a Functor or String for a token enclosed in quotes.
+    /// Returns a token for a function symbol or string enclosed in quotes.
     ///
     /// Escape sequences are replaced and the token will not include the
     /// surrounding quotes. An error is returned if the quote is unclosed.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_quote(&self, line: &str) -> (Token<'ns>, usize) {
         let quote = line.chars().nth(0).unwrap();
         let mut buf = String::with_capacity(32);
@@ -348,6 +411,10 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     }
 
     /// Returns the token for a single char symbol.
+    ///
+    /// These include the various parens as well as the comma, bar, and period.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_simple(&self, line: &str) -> (Token<'ns>, usize) {
         let tok = match line.chars().nth(0).unwrap() {
             '(' => Token::ParenOpen(self.line, self.col),
@@ -365,9 +432,17 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     }
 
     /// Returns the next whitespace token.
+    ///
+    /// This includes characters in the unicode Whitespace and Other
+    /// categories, including control characters.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_space(&self, line: &str) -> (Token<'ns>, usize) {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"^[\s\p{C}]+").unwrap();
+            static ref RE: Regex = {
+                let pattern = r"^[\s\p{C}]+";
+                Regex::new(pattern).unwrap()
+            };
         }
 
         let m = RE.find(line).unwrap();
@@ -376,10 +451,17 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         (tok, s.len())
     }
 
-    /// Retuns a token giving the text of a comment.
+    /// Retuns a token for a comment.
+    ///
+    /// Comments start with '%' and extend to the end of the line.
+    ///
+    /// The token MUST be at the start of the line.
     fn lex_comment(&self, line: &str) -> (Token<'ns>, usize) {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"^%.*").unwrap();
+            static ref RE: Regex = {
+                let pattern = r"^%.*";
+                Regex::new(pattern).unwrap()
+            };
         }
 
         let m = RE.find(line).unwrap();
@@ -387,17 +469,6 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         let tok = Token::Space(self.line, self.col);
         (tok, s.len())
     }
-}
-
-// Helpers
-// --------------------------------------------------
-
-fn is_special(ch: char) -> bool {
-    "\'\",.|%{[()]}".contains(ch)
-}
-
-fn is_symbolic(ch: char) -> bool {
-    !ch.is_alphanumeric() && !ch.is_whitespace() && !ch.is_control() && !is_special(ch)
 }
 
 // Tests
