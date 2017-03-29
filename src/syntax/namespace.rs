@@ -21,8 +21,7 @@ pub struct NameSpace {
 /// of the `NameSpace` to which it belongs. The major difference is that names
 /// are compared for equality only by the value of the pointer, not the
 /// contents of the string. Thus `Name`s for the same string but from different
-/// `NameSpace`s are not equal. Ordering, however, is implemented across
-/// namespaces as standard lexicographic ordering.
+/// `NameSpace`s are not equal.
 #[derive(Clone, Copy)]
 #[derive(PartialEq, Eq)]
 pub struct Name<'ns> {

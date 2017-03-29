@@ -3,6 +3,24 @@ use std::ops::Deref;
 
 use syntax::namespace::{NameSpace, Name};
 
+/// A specification for parsing operators.
+///
+/// An `Op` tells the parser how to handle operators and is comprised of three
+/// components:
+///
+/// - The type of the operator, given by the discriminant of the enum,
+///   specifies whether the operator is prefix, infix, or postfix. The `F`
+///   indicates the position of the functor while `X` and `Y` indicate the
+///   position of the arguments. `Y` means that the argument must be of equal
+///   or lower precedence, and `X` means that the argument must be of strictly
+///   lower precedence. A `Y` on the right means that the operator is right
+///   associative, and likewise on the left means left associative. No `Y`
+///   means non-associative.
+/// - The precedence of the operator is given as a u32. A lower value equates
+///   to a narrower scope. Thus multiplicative operators have *lower*
+///   precedence than additive operators.
+/// - The symbol to use for the operator is given by a `Name` which must be
+///   assigned by the same `NameSpace` being used by the parser.
 #[derive(Debug)]
 #[derive(Clone, Copy)]
 #[derive(PartialEq, Eq)]
@@ -16,6 +34,11 @@ pub enum Op<'ns> {
     FX(u32, Name<'ns>),
 }
 
+/// The general categories of operators.
+///
+/// -`FX` and `FY` operators are `Prefix`.
+/// -`XFX`, `XFY`, and `YFX`, operators are `Infix`.
+/// -`XF` and `YF` operators are `Postfix`.
 #[derive(Clone, Copy)]
 #[derive(PartialEq, Eq)]
 #[derive(PartialOrd, Ord)]
@@ -25,6 +48,10 @@ pub enum OpType {
     Postfix,
 }
 
+/// A table of operators to be used by a `Parser`.
+///
+/// The table is implemented as a sorted list of `Op`s. Operators are sorted
+/// first by name, then by type, and finally by precedence.
 #[derive(Debug)]
 pub struct OpTable<'ns>(Vec<Op<'ns>>);
 
@@ -32,14 +59,19 @@ pub struct OpTable<'ns>(Vec<Op<'ns>>);
 // --------------------------------------------------
 
 impl<'ns> OpTable<'ns> {
+    /// Construct a new, empty operator table.
     pub fn new() -> OpTable<'ns> {
         OpTable(Vec::new())
     }
 
+    /// View the table as a sorted slice of `Op`s.
     pub fn as_slice(&self) -> &[Op<'ns>] {
         &self.0
     }
 
+    /// Insert a new operator into the table.
+    ///
+    /// TODO: remove any conflicting operators.
     pub fn insert(&mut self, op: Op<'ns>) {
         match self.binary_search(&op) {
             Ok(i) => self.0[i] = op,
@@ -47,6 +79,9 @@ impl<'ns> OpTable<'ns> {
         }
     }
 
+    /// Get a slice of all operators matching the given name.
+    ///
+    /// The resulting slice is in sorted order.
     pub fn get(&self, name: Name<'ns>) -> &[Op<'ns>] {
         let target = Op::FX(0, name);
         let i = match self.binary_search(&target) {
@@ -61,6 +96,7 @@ impl<'ns> OpTable<'ns> {
         &self[i..j]
     }
 
+    /// Get the first prefix operator matching this name and equal or lower precedence.
     pub fn get_prefix(&self, name: Name<'ns>, prec: u32) -> Option<Op<'ns>> {
         self.get(name)
             .iter()
@@ -68,6 +104,7 @@ impl<'ns> OpTable<'ns> {
             .find(|op| op.op_type() == OpType::Prefix && op.prec() <= prec)
     }
 
+    /// Get the first infix operator matching this name and equal or lower precedence.
     pub fn get_infix(&self, name: Name<'ns>, prec: u32) -> Option<Op<'ns>> {
         self.get(name)
             .iter()
@@ -75,6 +112,7 @@ impl<'ns> OpTable<'ns> {
             .find(|op| op.op_type() == OpType::Infix && op.prec() <= prec)
     }
 
+    /// Get the first postfix operator matching this name and equal or lower precedence.
     pub fn get_postfix(&self, name: Name<'ns>, prec: u32) -> Option<Op<'ns>> {
         self.get(name)
             .iter()
@@ -82,11 +120,21 @@ impl<'ns> OpTable<'ns> {
             .find(|op| op.op_type() == OpType::Postfix && op.prec() <= prec)
     }
 
-    pub fn get_compatible(&self, name: Name<'ns>, lhs_prec: u32) -> Option<Op<'ns>> {
+    /// Get the first operator of the given name which is compatible with a
+    /// left-hand argument of the given precedence and a given max precedence.
+    ///
+    /// Prefix operators are *never* compatible with a left-hand argument. For
+    /// the other types, the associativity determines if the lhs precedence
+    /// should be simply less than or strictly less than the precedence of the
+    /// operator.
+    pub fn get_compatible(&self, name: Name<'ns>, lhs_prec: u32, max_prec: u32) -> Option<Op<'ns>> {
         for op in self.get(name).iter().cloned() {
+            let prec = op.prec();
+            let y = lhs_prec <= prec && prec <= max_prec;
+            let x = lhs_prec < prec && prec <= max_prec;
             match op {
-                Op::YFX(..) | Op::YF(..) if op.prec() <= lhs_prec => return Some(op),
-                Op::XFX(..) | Op::XFY(..) | Op::XF(..) if op.prec() < lhs_prec => return Some(op),
+                Op::YFX(..) | Op::YF(..) if y => return Some(op),
+                Op::XFX(..) | Op::XFY(..) | Op::XF(..) if x => return Some(op),
                 _ => (),
             }
         }
@@ -191,6 +239,12 @@ impl<'ns> Ord for Op<'ns> {
 
 #[cfg_attr(rustfmt, rustfmt_skip)]
 impl<'ns> OpTable<'ns> {
+    /// Returns the default set of Prolog operators, named in the given
+    /// namespace.
+    ///
+    /// Because this module aims to be general for all logic programming
+    /// languages, this function is likely to move somewhere more Prolog
+    /// specific.
     pub fn default(ns: &'ns NameSpace) -> OpTable<'ns> {
         // TODO: This can be sorted by hand.
         OpTable::from(vec![

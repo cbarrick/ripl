@@ -80,7 +80,7 @@ impl<'a, B: BufRead> Iterator for Parser<'a, B> {
     fn next(&mut self) -> Option<Box<Structure<'a>>> {
         self.vars.clear();
         self.buf.clear();
-        match self.read(1201) {
+        match self.read(1200) {
             Ok(_) => {
                 if self.buf.len() == 0 {
                     None
@@ -124,24 +124,25 @@ impl<'a, B: BufRead> Parser<'a, B> {
     /// or otherwise a syntax error.
     ///
     /// Upon returning, the parse tree exists in the buffer.
-    fn read(&mut self, prec: u32) -> Result<u32> {
-        self.read_primary(prec)?;
+    fn read(&mut self, max_prec: u32) -> Result<u32> {
+        self.read_primary(max_prec)?;
+        let mut prec = 0;
         loop {
             match self.lexer.peek() {
                 Some(&Token::Bar(.., name)) |
                 Some(&Token::Comma(.., name)) |
                 Some(&Token::Funct(.., name)) => {
-                    match self.ops.get_compatible(name, prec) {
+                    match self.ops.get_compatible(name, prec, max_prec) {
                         None => break,
                         Some(op) => {
                             self.lexer.next();
                             match op {
                                 Op::XFY(..) => {
-                                    self.read(op.prec())?;
+                                    prec = self.read(op.prec())?;
                                     self.buf.push(Symbol::Funct(2, name));
                                 }
                                 Op::YFX(..) | Op::XFX(..) => {
-                                    self.read(op.prec() - 1)?;
+                                    prec = self.read(op.prec() - 1)?;
                                     self.buf.push(Symbol::Funct(2, name));
                                 }
                                 _ => {
