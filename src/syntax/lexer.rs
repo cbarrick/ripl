@@ -1,5 +1,17 @@
+//! A lexer for logic programs.
+//!
+//! A [`Lexer`] lifts a buffered reader into an iterator over [`Token`]s.
+//! Errors may occur at both the I/O and lexing levels. These are handled
+//! in-band, meaning that a special token type, `Token::Err`, is reserved for
+//! passing errors to the caller. This greatly simplifies error handling logic
+//! when matching over the sequence of tokens.
+//!
+//! [`Lexer`]: ./struct.Lexer.html
+//! [`Token`]: ./enum.Token.html
+
 use std::fmt;
 use std::io::BufRead;
+
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
@@ -7,14 +19,20 @@ use syntax::namespace::{NameSpace, Name};
 
 /// A lexer for logic programs.
 ///
-/// Implemented as an iterator over `Token`s.
+/// The lexer interface is an iterator over [`Token`]s.
+///
+/// [`Token`]: ./enum.Token.html
 pub struct Lexer<'ns, B: BufRead> {
     reader: B,
-    buf: String,
     ns: &'ns NameSpace,
     line: usize,
     col: usize,
     skip_space: bool,
+
+    // Two buffers: The first holds each line.
+    // The second holds the normalized form of the line.
+    buf_line: String,
+    buf_norm: String,
 }
 
 /// A lexical item of a logic program.
@@ -46,13 +64,6 @@ pub enum Token<'ns> {
     Comment(usize, usize),
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq, Eq)]
-pub struct LexErr(usize, usize, String);
-
-pub type Result<T> = ::std::io::Result<T>;
-
 // Public API
 // --------------------------------------------------
 
@@ -60,25 +71,32 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// Constructs a new lexer from a stream of chars.
     ///
     /// By default, the lexer is configured to skip space and comment tokens.
-    /// See the `report_space` method for more information.
     pub fn new(reader: B, ns: &'ns NameSpace) -> Self {
         Lexer {
             reader: reader,
-            buf: String::with_capacity(128),
             ns: ns,
-            line: 0,
-            col: 0,
+            line: 0, // incremented on first line
+            col: 1,
             skip_space: true,
+            buf_line: String::with_capacity(128),
+            buf_norm: String::with_capacity(128),
         }
     }
 
     /// Toggles whether space and comment tokens are reported.
-    ///
-    /// This method is intended to be used as a "builder" function and thus
-    /// takes and returns ownership of `self`.
     pub fn report_space(mut self, yes: bool) -> Self {
         self.skip_space = yes;
         self
+    }
+
+    /// Returns the line of the next token to be emitted by the lexer.
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    /// Returns the column of the next token to be emitted by the lexer.
+    pub fn col(&self) -> usize {
+        self.col
     }
 }
 
@@ -87,9 +105,10 @@ impl<'ns, B: BufRead> Iterator for Lexer<'ns, B> {
 
     /// Extracts the next token from the underlying reader.
     fn next(&mut self) -> Option<Token<'ns>> {
-        // Refill the buffer.
-        if self.buf.len() == 0 {
-            match self.reader.read_line(&mut self.buf) {
+        // Refill the buffers.
+        if self.buf_norm.len() <= self.col {
+            self.buf_line.clear();
+            match self.reader.read_line(&mut self.buf_line) {
                 Ok(0) => return None, // Nothing more to read
                 Ok(_) => (),          // The buffer is refilled successfully
                 Err(e) => panic!(e),  // TODO: I/O errors shouldn't panic
@@ -99,13 +118,13 @@ impl<'ns, B: BufRead> Iterator for Lexer<'ns, B> {
 
             // Perform Unicode normalization.
             // This has security, usability, and performance implications.
-            self.buf = self.buf.nfkc().collect();
+            self.buf_norm.clear();
+            self.buf_norm.extend(self.buf_line.nfkc());
         }
 
         // Lex the next token.
-        let (tok, len) = self.lex(self.buf.as_str());
+        let (tok, len) = self.lex(&self.buf_norm[self.col - 1..]);
         self.col += len;
-        self.buf.drain(..len);
 
         // Skip space and comment tokens.
         match tok {
@@ -242,7 +261,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
 
         let m = RE.find(line).unwrap();
         let s = m.as_str().split(|ch| ch == ',' || ch == '.' || ch == '|').nth(0).unwrap();
-        let tok = Token::Funct(self.line, self.col, self.ns.name(s));
+        let tok = Token::Funct(self.line(), self.col(), self.ns.name(s));
         (tok, s.len())
     }
 
@@ -262,7 +281,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
 
         let m = RE.find(line).unwrap();
         let s = m.as_str();
-        let tok = Token::Var(self.line, self.col, self.ns.name(s));
+        let tok = Token::Var(self.line(), self.col(), self.ns.name(s));
         (tok, s.len())
     }
 
@@ -278,8 +297,8 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                 let (subtok, sublen) = self.lex_zero(&line[1..]);
                 len += 1 + sublen;
                 match subtok {
-                    Token::Int(_, _, val) => Token::Int(self.line, self.col, -val),
-                    Token::Float(_, _, val) => Token::Float(self.line, self.col, -val),
+                    Token::Int(_, _, val) => Token::Int(self.line(), self.col(), -val),
+                    Token::Float(_, _, val) => Token::Float(self.line(), self.col(), -val),
                     _ => unreachable!("lex_zero must return a numeric token"),
                 }
             }
@@ -287,8 +306,8 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                 let (subtok, sublen) = self.lex_decimal(&line[1..]);
                 len += 1 + sublen;
                 match subtok {
-                    Token::Int(_, _, val) => Token::Int(self.line, self.col, -val),
-                    Token::Float(_, _, val) => Token::Float(self.line, self.col, -val),
+                    Token::Int(_, _, val) => Token::Int(self.line(), self.col(), -val),
+                    Token::Float(_, _, val) => Token::Float(self.line(), self.col(), -val),
                     _ => unreachable!("lex_zero must return a numeric token"),
                 }
             }
@@ -318,7 +337,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
             Some('b') => radix = 2,
             Some('.') => return self.lex_decimal(line),
             Some(ch) if ch.is_digit(10) => return self.lex_decimal(line),
-            _ => return (Token::Int(self.line, self.col, 0), 1),
+            _ => return (Token::Int(self.line(), self.col(), 0), 1),
         }
         len += 2;
 
@@ -336,7 +355,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
 
         // Parse the buffer into an integer.
         let tok = match i64::from_str_radix(buf.as_str(), radix) {
-            Ok(x) => Token::Int(self.line, self.col, x),
+            Ok(x) => Token::Int(self.line(), self.col(), x),
             Err(_) => unreachable!("the buffer must be valid in the given radix"),
         };
         (tok, len)
@@ -362,8 +381,8 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         let s = m.as_str();
         let float = s.chars().any(|ch| ch == 'e' || ch == '.');
         let tok = match float {
-            true => Token::Float(self.line, self.col, s.parse().unwrap()),
-            false => Token::Int(self.line, self.col, s.parse().unwrap()),
+            true => Token::Float(self.line(), self.col(), s.parse().unwrap()),
+            false => Token::Int(self.line(), self.col(), s.parse().unwrap()),
         };
         (tok, s.len())
     }
@@ -403,9 +422,9 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
 
         let len = buf.len() + 2;
         let tok = match ok {
-            true if quote == '\"' => Token::Str(self.line, self.col, self.ns.name(buf)),
-            true => Token::Funct(self.line, self.col, self.ns.name(buf)),
-            false => Token::Err(self.line, self.col, "unclosed quote"),
+            true if quote == '\"' => Token::Str(self.line(), self.col(), self.ns.name(buf)),
+            true => Token::Funct(self.line(), self.col(), self.ns.name(buf)),
+            false => Token::Err(self.line(), self.col(), "unclosed quote"),
         };
         (tok, len)
     }
@@ -417,15 +436,15 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// The token MUST be at the start of the line.
     fn lex_simple(&self, line: &str) -> (Token<'ns>, usize) {
         let tok = match line.chars().nth(0).unwrap() {
-            '(' => Token::ParenOpen(self.line, self.col),
-            ')' => Token::ParenClose(self.line, self.col),
-            '[' => Token::BracketOpen(self.line, self.col),
-            ']' => Token::BracketClose(self.line, self.col),
-            '{' => Token::BraceOpen(self.line, self.col),
-            '}' => Token::BraceClose(self.line, self.col),
-            ',' => Token::Comma(self.line, self.col, self.ns.name(",")),
-            '|' => Token::Bar(self.line, self.col, self.ns.name("|")),
-            '.' => Token::Dot(self.line, self.col),
+            '(' => Token::ParenOpen(self.line(), self.col()),
+            ')' => Token::ParenClose(self.line(), self.col()),
+            '[' => Token::BracketOpen(self.line(), self.col()),
+            ']' => Token::BracketClose(self.line(), self.col()),
+            '{' => Token::BraceOpen(self.line(), self.col()),
+            '}' => Token::BraceClose(self.line(), self.col()),
+            ',' => Token::Comma(self.line(), self.col(), self.ns.name(",")),
+            '|' => Token::Bar(self.line(), self.col(), self.ns.name("|")),
+            '.' => Token::Dot(self.line(), self.col()),
             _ => unreachable!("lex_simple must be called with a simple character"),
         };
         (tok, 1)
@@ -447,7 +466,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
 
         let m = RE.find(line).unwrap();
         let s = m.as_str();
-        let tok = Token::Space(self.line, self.col);
+        let tok = Token::Space(self.line(), self.col());
         (tok, s.len())
     }
 
@@ -466,7 +485,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
 
         let m = RE.find(line).unwrap();
         let s = m.as_str();
-        let tok = Token::Space(self.line, self.col);
+        let tok = Token::Space(self.line(), self.col());
         (tok, s.len())
     }
 }

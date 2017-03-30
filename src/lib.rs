@@ -10,4 +10,3 @@ extern crate unicode_normalization;
 
 pub mod collections;
 pub mod syntax;
-pub mod repr;

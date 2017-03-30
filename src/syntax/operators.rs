@@ -1,24 +1,25 @@
-use std::cmp::{PartialOrd, Ordering};
+//! A specification for operator parsing.
+
+use std::cmp::Ordering;
 use std::ops::Deref;
 
 use syntax::namespace::{NameSpace, Name};
 
-/// A specification for parsing operators.
+/// An entry in the `OpTable`.
 ///
-/// An `Op` tells the parser how to handle operators and is comprised of three
-/// components:
+/// An `Op` is comprised of three components:
 ///
 /// - The type of the operator, given by the discriminant of the enum,
 ///   specifies whether the operator is prefix, infix, or postfix. The `F`
 ///   indicates the position of the functor while `X` and `Y` indicate the
-///   position of the arguments. `Y` means that the argument must be of equal
-///   or lower precedence, and `X` means that the argument must be of strictly
-///   lower precedence. A `Y` on the right means that the operator is right
-///   associative, and likewise on the left means left associative. No `Y`
-///   means non-associative.
+///   position of the arguments. A `Y` on the right means that the operator is
+///   right-associative, and likewise on the left means left-associative. No
+///   `Y` means non-associative.
 /// - The precedence of the operator is given as a u32. A lower value equates
-///   to a narrower scope. Thus multiplicative operators have *lower*
-///   precedence than additive operators.
+///   to a higher logical precedence. Operators with a precedence value greater
+///   than 1200 will be ignored by the parser, and terms a with precedence
+///   value greater than 999 must be surrounded by parens when used as an
+///   argument to compound terms.
 /// - The symbol to use for the operator is given by a `Name` which must be
 ///   assigned by the same `NameSpace` being used by the parser.
 #[derive(Debug)]
@@ -36,9 +37,9 @@ pub enum Op<'ns> {
 
 /// The general categories of operators.
 ///
-/// -`FX` and `FY` operators are `Prefix`.
-/// -`XFX`, `XFY`, and `YFX`, operators are `Infix`.
-/// -`XF` and `YF` operators are `Postfix`.
+/// - `FX` and `FY` operators are `Prefix`.
+/// - `XFX`, `XFY`, and `YFX`, operators are `Infix`.
+/// - `XF` and `YF` operators are `Postfix`.
 #[derive(Clone, Copy)]
 #[derive(PartialEq, Eq)]
 #[derive(PartialOrd, Ord)]
@@ -96,38 +97,42 @@ impl<'ns> OpTable<'ns> {
         &self[i..j]
     }
 
-    /// Get the first prefix operator matching this name and equal or lower precedence.
-    pub fn get_prefix(&self, name: Name<'ns>, prec: u32) -> Option<Op<'ns>> {
+    /// Get the first prefix operator of the given `name`
+    /// which has precedence less than or equal to `max_prec`.
+    pub fn get_prefix(&self, name: Name<'ns>, max_prec: u32) -> Option<Op<'ns>> {
         self.get(name)
             .iter()
             .cloned()
-            .find(|op| op.op_type() == OpType::Prefix && op.prec() <= prec)
+            .find(|op| op.op_type() == OpType::Prefix && op.prec() <= max_prec)
     }
 
-    /// Get the first infix operator matching this name and equal or lower precedence.
-    pub fn get_infix(&self, name: Name<'ns>, prec: u32) -> Option<Op<'ns>> {
+    /// Get the first infix operator of the given `name`
+    /// which has precedence less than or equal to `max_prec`.
+    pub fn get_infix(&self, name: Name<'ns>, max_prec: u32) -> Option<Op<'ns>> {
         self.get(name)
             .iter()
             .cloned()
-            .find(|op| op.op_type() == OpType::Infix && op.prec() <= prec)
+            .find(|op| op.op_type() == OpType::Infix && op.prec() <= max_prec)
     }
 
-    /// Get the first postfix operator matching this name and equal or lower precedence.
-    pub fn get_postfix(&self, name: Name<'ns>, prec: u32) -> Option<Op<'ns>> {
+    /// Get the first postfix operator of the given `name`
+    /// which has precedence less than or equal to `max_prec`.
+    pub fn get_postfix(&self, name: Name<'ns>, max_prec: u32) -> Option<Op<'ns>> {
         self.get(name)
             .iter()
             .cloned()
-            .find(|op| op.op_type() == OpType::Postfix && op.prec() <= prec)
+            .find(|op| op.op_type() == OpType::Postfix && op.prec() <= max_prec)
     }
 
-    /// Get the first operator of the given name which is compatible with a
-    /// left-hand argument of the given precedence and a given max precedence.
+    /// Get the first operator of the given `name` which has precedence less
+    /// than or equal to `max_prec` and is compatible with a left-hand argument
+    /// with precedence `lhs_prec`.
     ///
     /// Prefix operators are *never* compatible with a left-hand argument. For
     /// the other types, the associativity determines if the lhs precedence
     /// should be simply less than or strictly less than the precedence of the
     /// operator.
-    pub fn get_compatible(&self, name: Name<'ns>, lhs_prec: u32, max_prec: u32) -> Option<Op<'ns>> {
+    pub fn get_compatible(&self, name: Name<'ns>, max_prec: u32, lhs_prec: u32) -> Option<Op<'ns>> {
         for op in self.get(name).iter().cloned() {
             let prec = op.prec();
             let y = lhs_prec <= prec && prec <= max_prec;

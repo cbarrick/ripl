@@ -1,3 +1,22 @@
+//! Assigns names to tokens.
+//!
+//! Logic programming is a homoiconic programming paradigm, meaning the
+//! syntactic structures which appear in the source code are equivalent to the
+//! structures being manipulated by the program. To avoid costly string
+//! operations, we must use a lightweight representation for atomic symbols.
+//!
+//! This lightweight representation is the [`Name`]. A `Name` is essentially
+//! a `&str` string slice, except equality is optimized to a single pointer
+//! comparison.
+//!
+//! To ensure that all equivalent strings are represented by the same `Name`,
+//! we employ a [`NameSpace`]. A `NameSpace` is essentially a string interner.
+//! It takes ownership of strings and issues corresponding `Name`s, which must
+//! not outlive the `NameSpace` which issued them.
+//!
+//! [`NameSpace`]: ./struct.NameSpace.html
+//! [`Name`]: ./struct.Name.html
+
 use std::cell::RefCell;
 use std::cmp::{PartialOrd, Ordering};
 use std::collections::HashSet;
