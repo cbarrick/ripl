@@ -22,12 +22,11 @@
 //!
 //! [1]: https://en.wikipedia.org/wiki/Prolog_syntax_and_semantics
 
-use std::fmt;
 use std::io::BufRead;
-use std::iter::Peekable;
 use std::mem;
 use std::vec::Drain;
 
+use syntax::error::{SyntaxError, Result};
 use syntax::lexer::{Lexer, Token};
 use syntax::namespace::{NameSpace, Name};
 use syntax::operators::{OpTable, Op};
@@ -50,25 +49,12 @@ use syntax::repr::{Structure, Symbol};
 /// [1]: https://en.wikipedia.org/wiki/Operator-precedence_parser#Precedence_climbing_method
 pub struct Parser<'ctx, B: BufRead> {
     ops: &'ctx OpTable<'ctx>,
-    lexer: Peekable<Lexer<'ctx, B>>,
+    lexer: Lexer<'ctx, B>,
+    peeked: Option<Token<'ctx>>,
     errs: Vec<SyntaxError>,
     vars: Vec<Name<'ctx>>,
     buf: Vec<Symbol<'ctx>>,
 }
-
-/// The location and description of syntax errors.
-#[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq, Eq)]
-#[derive(PartialOrd, Ord)]
-pub struct SyntaxError {
-    pub line: usize,
-    pub col: usize,
-    pub desc: String,
-}
-
-/// A type alias for results with possible `SyntaxError`s.
-pub type Result<T> = ::std::result::Result<T, SyntaxError>;
 
 // Public API
 // --------------------------------------------------
@@ -78,7 +64,8 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
     pub fn new(reader: B, ns: &'ctx NameSpace, ops: &'ctx OpTable<'ctx>) -> Parser<'ctx, B> {
         Parser {
             ops: ops,
-            lexer: Lexer::new(reader, ns).peekable(),
+            lexer: Lexer::new(reader, ns),
+            peeked: None,
             errs: Vec::new(),
             vars: Vec::with_capacity(32),
             buf: Vec::with_capacity(256),
@@ -100,17 +87,16 @@ impl<'ctx, B: BufRead> Iterator for Parser<'ctx, B> {
         match self.read(1200) {
             Ok(_) => {
                 if self.buf.len() == 0 {
+                    // `read` produced no results.
+                    // Must be at end of input.
                     None
-                } else if let Some(Token::Dot(..)) = self.lexer.next() {
+                } else if let Some(Token::Dot(..)) = self.next_tok() {
                     let structure = unsafe { struct_from_vec(self.buf.clone()) };
                     Some(structure)
                 } else {
-                    // TODO: get line and col numbers
-                    self.errs.push(SyntaxError {
-                        line: 0,
-                        col: 0,
-                        desc: "operator priority clash".to_string(),
-                    });
+                    let line = self.lexer.line();
+                    let col = self.lexer.col();
+                    self.errs.push(SyntaxError::priority_clash(line, col));
                     self.next()
                 }
             }
@@ -149,14 +135,14 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
         // Thus all comparisons are the opposite of the pseudo-code.
         let mut prec = self.read_primary(max_prec)?;
         loop {
-            match self.lexer.peek() {
+            match self.peek_tok() {
                 Some(&Token::Bar(.., name)) |
                 Some(&Token::Comma(.., name)) |
                 Some(&Token::Funct(.., name)) => {
                     match self.ops.get_compatible(name, max_prec, prec) {
                         None => break,
                         Some(op) => {
-                            self.lexer.next();
+                            self.next_tok();
                             match op {
                                 Op::XFY(..) => {
                                     prec = self.read(op.prec())?;
@@ -186,7 +172,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
     /// lists, strings. This step also recursively descends to parse terms
     /// grouped in parens.
     fn read_primary(&mut self, max_prec: u32) -> Result<u32> {
-        match self.lexer.next() {
+        match self.next_tok() {
             // Skip spaces and comments.
             Some(Token::Space(..)) |
             Some(Token::Comment(..)) => {
@@ -197,7 +183,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
             Some(Token::Bar(.., name)) |
             Some(Token::Comma(.., name)) |
             Some(Token::Funct(.., name)) => {
-                match self.lexer.peek() {
+                match self.peek_tok() {
                     // Compound term
                     Some(&Token::ParenOpen(..)) => {
                         let arity = self.read_args()?;
@@ -267,33 +253,25 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                 Ok(0)
             }
 
-            // TODO: Lists.
-            Some(Token::BracketOpen(line, col)) => {
-                syntax_error(line, col, "lists are not yet supported")
-            }
-
-            // TODO: Braces.
-            Some(Token::BraceOpen(line, col)) => {
-                syntax_error(line, col, "braces are not yet supported")
-            }
-
             // Parens.
             Some(Token::ParenOpen(line, col)) => {
                 self.read(1200)?;
-                match self.lexer.next() {
+                match self.next_tok() {
                     Some(Token::ParenClose(..)) => Ok(0),
-                    Some(Token::Err(line, col, err)) => syntax_error(line, col, err),
-                    _ => syntax_error(line, col, "unclosed paren"),
+                    _ => Err(SyntaxError::unbalanced(line, col, ')')),
                 }
             }
 
+            // TODO: Lists and braces.
+            Some(Token::BracketOpen(line, col)) => Err(SyntaxError::todo(line, col)),
+            Some(Token::BraceOpen(line, col)) => Err(SyntaxError::todo(line, col)),
+
             // Syntax errors.
-            Some(Token::ParenClose(line, col)) => syntax_error(line, col, "unbalanced ')'"),
-            Some(Token::BracketClose(line, col)) => syntax_error(line, col, "unbalanced ']'"),
-            Some(Token::BraceClose(line, col)) => syntax_error(line, col, "unbalanced '}'"),
-            Some(Token::Dot(line, col)) => syntax_error(line, col, "unexpected period"),
-            Some(Token::Err(line, col, desc)) => syntax_error(line, col, desc),
-            None => syntax_error(0, 0, "unexpected eof"),
+            Some(Token::ParenClose(line, col)) => Err(SyntaxError::unbalanced(line, col, ')')),
+            Some(Token::BracketClose(line, col)) => Err(SyntaxError::unbalanced(line, col, ']')),
+            Some(Token::BraceClose(line, col)) => Err(SyntaxError::unbalanced(line, col, '}')),
+            Some(Token::Dot(line, col)) => Err(SyntaxError::unexpected(line, col, "period")),
+            None => Err(SyntaxError::unexpected(self.lexer.line(), self.lexer.col(), "eof")),
         }
     }
 
@@ -305,48 +283,69 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
     ///
     /// TODO: support lists
     fn read_args(&mut self) -> Result<u32> {
-        let front = self.lexer.next();
+        let front = self.next_tok();
         match front {
             Some(Token::ParenOpen(..)) => (),
-            None => return syntax_error(0, 0, "unexpected eof"),
+            None => {
+                let line = self.lexer.line();
+                let col = self.lexer.col();
+                return Err(SyntaxError::unexpected(line, col, "eof"));
+            }
             _ => panic!("must not call read_args in this context"),
         }
 
         let mut arity = 1;
         loop {
             self.read(999)?;
-            match self.lexer.next() {
+            match self.next_tok() {
                 Some(Token::ParenClose(..)) => return Ok(arity),
                 Some(Token::Comma(..)) => arity += 1,
 
-                Some(Token::Err(line, col, desc)) => return syntax_error(line, col, desc),
-                Some(tok) => {
-                    let desc = format!("expected comma between arguments, found '{}'", tok);
-                    return syntax_error(tok.line(), tok.col(), desc);
+                Some(tok) => return Err(SyntaxError::priority_clash(tok.line(), tok.col())),
+                None => {
+                    let line = self.lexer.line();
+                    let col = self.lexer.col();
+                    return Err(SyntaxError::unexpected(line, col, "eof"));
                 }
-                None => return syntax_error(0, 0, "unexpected eof"),
             }
         }
     }
-}
 
-// SyntaxError
-// --------------------------------------------------
+    /// Implement token peeking.
+    ///
+    /// We implement peeking manually instead of using `std::iter::Peekable`.
+    /// This lets us keep direct ownership of the lexer and call its methods.
+    fn peek_tok(&mut self) -> Option<&Token<'ctx>> {
+        match self.peeked {
+            Some(ref tok) => Some(tok),
+            None => {
+                self.peeked = self.next_tok();
+                match self.peeked {
+                    Some(ref tok) => Some(tok),
+                    None => None,
+                }
+            }
+        }
+    }
 
-/// A helper to easily construct a `Result<u32, SyntaxError>`.
-fn syntax_error<T>(line: usize, col: usize, desc: T) -> Result<u32>
-    where T: Into<String>
-{
-    Err(SyntaxError {
-        line: line,
-        col: col,
-        desc: desc.into(),
-    })
-}
-
-impl<'ctx> fmt::Display for SyntaxError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.col, self.desc)
+    /// Get the next token from the lexer.
+    ///
+    /// Calling `self.lexer.next()` directly outside of this or `peek_tok`
+    /// will poison the peek cache.
+    fn next_tok(&mut self) -> Option<Token<'ctx>> {
+        match self.peeked.take() {
+            Some(tok) => Some(tok),
+            None => {
+                match self.lexer.next() {
+                    None => None,
+                    Some(Ok(tok)) => Some(tok),
+                    Some(Err(e)) => {
+                        self.errs.push(e);
+                        self.next_tok()
+                    }
+                }
+            }
+        }
     }
 }
 

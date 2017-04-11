@@ -16,6 +16,7 @@ use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
 use syntax::namespace::{NameSpace, Name};
+use syntax::error::{Result, SyntaxError};
 
 /// A lexer for logic programs.
 ///
@@ -45,7 +46,6 @@ pub struct Lexer<'ns, B: BufRead> {
 #[derive(Clone, Copy)]
 #[derive(PartialEq)]
 pub enum Token<'ns> {
-    Err(usize, usize, &'static str),
     Funct(usize, usize, Name<'ns>),
     Str(usize, usize, Name<'ns>),
     Var(usize, usize, Name<'ns>),
@@ -101,20 +101,20 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
 }
 
 impl<'ns, B: BufRead> Iterator for Lexer<'ns, B> {
-    type Item = Token<'ns>;
+    type Item = Result<Token<'ns>>;
 
     /// Extracts the next token from the underlying reader.
-    fn next(&mut self) -> Option<Token<'ns>> {
+    fn next(&mut self) -> Option<Result<Token<'ns>>> {
         // Refill the buffers.
         if self.buf_norm.len() <= self.col {
+            self.line += 1;
+            self.col = 1;
             self.buf_line.clear();
             match self.reader.read_line(&mut self.buf_line) {
                 Ok(0) => return None, // Nothing more to read
                 Ok(_) => (),          // The buffer is refilled successfully
-                Err(e) => panic!(e),  // TODO: I/O errors shouldn't panic
+                Err(e) => return Some(Err(SyntaxError::wrap(self.line, self.col, e))),
             }
-            self.line += 1;
-            self.col = 1;
 
             // Perform Unicode normalization.
             // This has security, usability, and performance implications.
@@ -128,8 +128,8 @@ impl<'ns, B: BufRead> Iterator for Lexer<'ns, B> {
 
         // Skip space and comment tokens.
         match tok {
-            Token::Space(..) if self.skip_space => self.next(),
-            Token::Comment(..) if self.skip_space => self.next(),
+            Ok(Token::Space(..)) if self.skip_space => self.next(),
+            Ok(Token::Comment(..)) if self.skip_space => self.next(),
             _ => Some(tok),
         }
     }
@@ -140,7 +140,6 @@ impl<'ns> Token<'ns> {
     #[inline]
     pub fn line(&self) -> usize {
         match *self {
-            Token::Err(line, ..) => line,
             Token::Funct(line, ..) => line,
             Token::Str(line, ..) => line,
             Token::Var(line, ..) => line,
@@ -164,7 +163,6 @@ impl<'ns> Token<'ns> {
     #[inline]
     pub fn col(&self) -> usize {
         match *self {
-            Token::Err(_, col, _) => col,
             Token::Funct(_, col, _) => col,
             Token::Str(_, col, _) => col,
             Token::Var(_, col, _) => col,
@@ -188,7 +186,6 @@ impl<'ns> Token<'ns> {
 impl<'ns> fmt::Display for Token<'ns> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Token::Err(.., msg) => write!(f, "{}", msg),
             Token::Funct(.., val) => write!(f, "{}", val),
             Token::Str(.., val) => write!(f, "{}", val),
             Token::Var(.., val) => write!(f, "{}", val),
@@ -216,7 +213,7 @@ impl<'ns> fmt::Display for Token<'ns> {
 
 impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// The main switch of the lexer.
-    fn lex(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         match line.chars().nth(0).unwrap() {
             '(' => self.lex_simple(line),
             ')' => self.lex_simple(line),
@@ -251,7 +248,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// symbols.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_functor(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_functor(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         lazy_static! {
             static ref RE: Regex = {
                 let pattern = r"^([\w\d]+|[\p{S}\p{Pc}\p{Pd}\p{Po}]+)";
@@ -262,7 +259,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         let m = RE.find(line).unwrap();
         let s = m.as_str().split(|ch| ch == ',' || ch == '.' || ch == '|').nth(0).unwrap();
         let tok = Token::Funct(self.line(), self.col(), self.ns.name(s));
-        (tok, s.len())
+        (Ok(tok), s.len())
     }
 
     /// Returns the token for a variable term.
@@ -271,7 +268,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// only of letters and underscores.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_var(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_var(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         lazy_static! {
             static ref RE: Regex = {
                 let pattern = r"^[\p{Lu}_][\w\d]*";
@@ -282,7 +279,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         let m = RE.find(line).unwrap();
         let s = m.as_str();
         let tok = Token::Var(self.line(), self.col(), self.ns.name(s));
-        (tok, s.len())
+        (Ok(tok), s.len())
     }
 
     /// Returns the token for a symbol starting with a minus.
@@ -290,15 +287,15 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// A minus can start both numeric and function symbol tokens.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_minus(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_minus(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         let mut len = 0;
         let tok = match line.chars().nth(1) {
             Some('0') => {
                 let (subtok, sublen) = self.lex_zero(&line[1..]);
                 len += 1 + sublen;
                 match subtok {
-                    Token::Int(_, _, val) => Token::Int(self.line(), self.col(), -val),
-                    Token::Float(_, _, val) => Token::Float(self.line(), self.col(), -val),
+                    Ok(Token::Int(_, _, val)) => Token::Int(self.line(), self.col(), -val),
+                    Ok(Token::Float(_, _, val)) => Token::Float(self.line(), self.col(), -val),
                     _ => unreachable!("lex_zero must return a numeric token"),
                 }
             }
@@ -306,14 +303,14 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                 let (subtok, sublen) = self.lex_decimal(&line[1..]);
                 len += 1 + sublen;
                 match subtok {
-                    Token::Int(_, _, val) => Token::Int(self.line(), self.col(), -val),
-                    Token::Float(_, _, val) => Token::Float(self.line(), self.col(), -val),
+                    Ok(Token::Int(_, _, val)) => Token::Int(self.line(), self.col(), -val),
+                    Ok(Token::Float(_, _, val)) => Token::Float(self.line(), self.col(), -val),
                     _ => unreachable!("lex_zero must return a numeric token"),
                 }
             }
             _ => return self.lex_functor(line),
         };
-        (tok, len)
+        (Ok(tok), len)
     }
 
     /// Returns the token for a number with a leading zero.
@@ -325,7 +322,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// - otherwise decimal is assumed
     ///
     /// The token MUST be at the start of the line.
-    fn lex_zero(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_zero(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         let mut len = 0;
 
         // We know the first char is '0'. The second char gives the radix.
@@ -337,13 +334,14 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
             Some('b') => radix = 2,
             Some('.') => return self.lex_decimal(line),
             Some(ch) if ch.is_digit(10) => return self.lex_decimal(line),
-            _ => return (Token::Int(self.line(), self.col(), 0), 1),
+            _ => return (Ok(Token::Int(self.line(), self.col(), 0)), 1),
         }
         len += 2;
 
         // Buffer up all chars in the given radix.
         let mut buf = String::with_capacity(32);
-        for ch in line[2..].chars() {
+        buf.push('0');
+        for ch in line.chars().skip(2) {
             match ch {
                 ch if ch.is_digit(radix) => {
                     len += ch.len_utf8();
@@ -358,7 +356,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
             Ok(x) => Token::Int(self.line(), self.col(), x),
             Err(_) => unreachable!("the buffer must be valid in the given radix"),
         };
-        (tok, len)
+        (Ok(tok), len)
     }
 
     /// Returns the token for a decimal number.
@@ -369,7 +367,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// This routine does not handle leading signs. See `lex_minus`.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_decimal(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_decimal(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         lazy_static! {
             static ref RE: Regex = {
                 let pattern = r"^\d[\d_]*(\.[\d_]+)?(e-?[\d_]+)?";
@@ -384,7 +382,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
             true => Token::Float(self.line(), self.col(), s.parse().unwrap()),
             false => Token::Int(self.line(), self.col(), s.parse().unwrap()),
         };
-        (tok, s.len())
+        (Ok(tok), s.len())
     }
 
     /// Returns a token for a function symbol or string enclosed in quotes.
@@ -393,7 +391,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// surrounding quotes. An error is returned if the quote is unclosed.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_quote(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_quote(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         let quote = line.chars().nth(0).unwrap();
         let mut buf = String::with_capacity(32);
         let mut escape = false;
@@ -421,12 +419,12 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         }
 
         let len = buf.len() + 2;
-        let tok = match ok {
-            true if quote == '\"' => Token::Str(self.line(), self.col(), self.ns.name(buf)),
-            true => Token::Funct(self.line(), self.col(), self.ns.name(buf)),
-            false => Token::Err(self.line(), self.col(), "unclosed quote"),
+        let r = match ok {
+            true if quote == '\"' => Ok(Token::Str(self.line(), self.col(), self.ns.name(buf))),
+            true => Ok(Token::Funct(self.line(), self.col(), self.ns.name(buf))),
+            false => Err(SyntaxError::unbalanced(self.line(), self.col(), quote)),
         };
-        (tok, len)
+        (r, len)
     }
 
     /// Returns the token for a single char symbol.
@@ -434,7 +432,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// These include the various parens as well as the comma, bar, and period.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_simple(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_simple(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         let tok = match line.chars().nth(0).unwrap() {
             '(' => Token::ParenOpen(self.line(), self.col()),
             ')' => Token::ParenClose(self.line(), self.col()),
@@ -447,7 +445,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
             '.' => Token::Dot(self.line(), self.col()),
             _ => unreachable!("lex_simple must be called with a simple character"),
         };
-        (tok, 1)
+        (Ok(tok), 1)
     }
 
     /// Returns the next whitespace token.
@@ -456,7 +454,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// categories, including control characters.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_space(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_space(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         lazy_static! {
             static ref RE: Regex = {
                 let pattern = r"^[\s\p{C}]+";
@@ -467,7 +465,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         let m = RE.find(line).unwrap();
         let s = m.as_str();
         let tok = Token::Space(self.line(), self.col());
-        (tok, s.len())
+        (Ok(tok), s.len())
     }
 
     /// Retuns a token for a comment.
@@ -475,7 +473,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
     /// Comments start with '%' and extend to the end of the line.
     ///
     /// The token MUST be at the start of the line.
-    fn lex_comment(&self, line: &str) -> (Token<'ns>, usize) {
+    fn lex_comment(&self, line: &str) -> (Result<Token<'ns>>, usize) {
         lazy_static! {
             static ref RE: Regex = {
                 let pattern = r"^%.*";
@@ -486,7 +484,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         let m = RE.find(line).unwrap();
         let s = m.as_str();
         let tok = Token::Space(self.line(), self.col());
-        (tok, s.len())
+        (Ok(tok), s.len())
     }
 }
 
@@ -508,27 +506,27 @@ mod test {
                   \t\t   \t\n";
         let ns = NameSpace::new();
         let mut toks = Lexer::new(pl.as_bytes(), &ns);
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 1, ns.name("_abcd")));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 7, ns.name("ABCD")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 12, ns.name("foobar")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 19, ns.name("hello world")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 33, ns.name("+++")));
-        assert_eq!(toks.next().unwrap(), Token::Int(3, 1, 123));
-        assert_eq!(toks.next().unwrap(), Token::Float(3, 5, 456.789));
-        assert_eq!(toks.next().unwrap(), Token::Float(3, 13, 8.765e43));
-        assert_eq!(toks.next().unwrap(), Token::Float(3, 22, 1e-1));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 1, 0xDEADBEEF));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 12, 0o644));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 18, 0b11001100));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 29, 0987654321));
-        assert_eq!(toks.next().unwrap(), Token::Float(4, 40, 0.123));
-        assert_eq!(toks.next().unwrap(), Token::Funct(5, 1, ns.name("->")));
-        assert_eq!(toks.next().unwrap(), Token::Int(5, 4, -0xff));
-        assert_eq!(toks.next().unwrap(), Token::Float(5, 10, -1.23));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(5, 16));
-        assert_eq!(toks.next().unwrap(), Token::Funct(5, 17, ns.name("-")));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(5, 18));
-        assert_eq!(toks.next(), None);
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(1, 1, ns.name("_abcd")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(1, 7, ns.name("ABCD")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(1, 12, ns.name("foobar")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(1, 19, ns.name("hello world")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(1, 33, ns.name("+++")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Int(3, 1, 123));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Float(3, 5, 456.789));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Float(3, 13, 8.765e43));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Float(3, 22, 1e-1));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Int(4, 1, 0xDEADBEEF));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Int(4, 12, 0o644));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Int(4, 18, 0b11001100));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Int(4, 29, 0987654321));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Float(4, 40, 0.123));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(5, 1, ns.name("->")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Int(5, 4, -0xff));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Float(5, 10, -1.23));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenOpen(5, 16));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(5, 17, ns.name("-")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenClose(5, 18));
+        assert!(toks.next().is_none());
     }
 
     #[test]
@@ -540,38 +538,38 @@ mod test {
         let mut toks = Lexer::new(pl.as_bytes(), &ns);
 
         // member(H, [H|T]).
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 1, ns.name("member")));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(1, 7));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 8, ns.name("H")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(1, 9, ns.name(",")));
-        assert_eq!(toks.next().unwrap(), Token::BracketOpen(1, 11));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 12, ns.name("H")));
-        assert_eq!(toks.next().unwrap(), Token::Bar(1, 13, ns.name("|")));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 14, ns.name("T")));
-        assert_eq!(toks.next().unwrap(), Token::BracketClose(1, 15));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(1, 16));
-        assert_eq!(toks.next().unwrap(), Token::Dot(1, 17));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(1, 1, ns.name("member")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenOpen(1, 7));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(1, 8, ns.name("H")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Comma(1, 9, ns.name(",")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::BracketOpen(1, 11));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(1, 12, ns.name("H")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Bar(1, 13, ns.name("|")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(1, 14, ns.name("T")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::BracketClose(1, 15));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenClose(1, 16));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Dot(1, 17));
 
         // member(X, [_|T]) :- member(X, T).
-        assert_eq!(toks.next().unwrap(), Token::Funct(2, 1, ns.name("member")));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(2, 7));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 8, ns.name("X")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(2, 9, ns.name(",")));
-        assert_eq!(toks.next().unwrap(), Token::BracketOpen(2, 11));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 12, ns.name("_")));
-        assert_eq!(toks.next().unwrap(), Token::Bar(2, 13, ns.name("|")));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 14, ns.name("T")));
-        assert_eq!(toks.next().unwrap(), Token::BracketClose(2, 15));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(2, 16));
-        assert_eq!(toks.next().unwrap(), Token::Funct(2, 18, ns.name(":-")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(2, 21, ns.name("member")));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(2, 27));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 28, ns.name("X")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(2, 29, ns.name(",")));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 31, ns.name("T")));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(2, 32));
-        assert_eq!(toks.next().unwrap(), Token::Dot(2, 33));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(2, 1, ns.name("member")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenOpen(2, 7));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(2, 8, ns.name("X")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Comma(2, 9, ns.name(",")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::BracketOpen(2, 11));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(2, 12, ns.name("_")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Bar(2, 13, ns.name("|")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(2, 14, ns.name("T")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::BracketClose(2, 15));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenClose(2, 16));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(2, 18, ns.name(":-")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Funct(2, 21, ns.name("member")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenOpen(2, 27));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(2, 28, ns.name("X")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Comma(2, 29, ns.name(",")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Var(2, 31, ns.name("T")));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::ParenClose(2, 32));
+        assert_eq!(toks.next().unwrap().unwrap(), Token::Dot(2, 33));
 
-        assert_eq!(toks.next(), None);
+        assert!(toks.next().is_none());
     }
 }
