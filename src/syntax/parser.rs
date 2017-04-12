@@ -131,6 +131,12 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
     ///
     /// [1]: https://en.wikipedia.org/wiki/Operator-precedence_parser#Precedence_climbing_method
     fn read(&mut self, max_prec: u32) -> Result<u32> {
+        // Check that we're not at EOF.
+        if self.peek_tok().is_none() {
+            return Ok(0);
+        }
+
+        // Precedence "climbing" algorithm.
         // Lower precedence values equate to higher logical precedence.
         // Thus all comparisons are the opposite of the pseudo-code.
         let mut prec = self.read_primary(max_prec)?;
