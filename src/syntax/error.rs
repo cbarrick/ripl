@@ -1,8 +1,5 @@
 use std::error::Error;
 use std::fmt;
-use std::io;
-
-use syntax::lexer::Token;
 
 /// A type alias for results with possible `SyntaxError`s.
 pub type Result<T> = ::std::result::Result<T, SyntaxError>;
@@ -72,8 +69,8 @@ impl Error for SyntaxError {
     fn description(&self) -> &str {
         match &self.kind {
             &Kind::PrioirtyClash => "operator priority clash",
-            &Kind::Unbalanced(ch) => "unbalanced quote or paren",
-            &Kind::Unexpected(s) => "unexpected token",
+            &Kind::Unbalanced(_) => "unbalanced quote or paren",
+            &Kind::Unexpected(_) => "unexpected token",
             &Kind::TODO => "not yet implemented",
             &Kind::Wrapper(ref e) => e.description(),
         }
@@ -90,6 +87,19 @@ impl Error for SyntaxError {
 
 impl<'ctx> fmt::Display for SyntaxError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.col, self.description())
+        write!(f, "{}:{}: ", self.line, self.col)?;
+        match &self.kind {
+            &Kind::PrioirtyClash => write!(f, "operator priority clash"),
+            &Kind::Unbalanced(ch) => write!(f, "unbalanced grouping character: '{}'", ch),
+            &Kind::Unexpected(tok) => write!(f, "unexpected token: {}", tok),
+            &Kind::TODO => write!(f, "not yet implemented"),
+            &Kind::Wrapper(ref e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl PartialEq for SyntaxError {
+    fn eq(&self, other: &SyntaxError) -> bool {
+        self.line == other.line && self.col == other.col
     }
 }

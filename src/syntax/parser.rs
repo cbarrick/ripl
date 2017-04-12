@@ -271,6 +271,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
             Some(Token::BracketClose(line, col)) => Err(SyntaxError::unbalanced(line, col, ']')),
             Some(Token::BraceClose(line, col)) => Err(SyntaxError::unbalanced(line, col, '}')),
             Some(Token::Dot(line, col)) => Err(SyntaxError::unexpected(line, col, "period")),
+            Some(Token::Err(e)) => Err(e),
             None => Err(SyntaxError::unexpected(self.lexer.line(), self.lexer.col(), "eof")),
         }
     }
@@ -338,11 +339,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
             None => {
                 match self.lexer.next() {
                     None => None,
-                    Some(Ok(tok)) => Some(tok),
-                    Some(Err(e)) => {
-                        self.errs.push(e);
-                        self.next_tok()
-                    }
+                    Some(tok) => Some(tok),
                 }
             }
         }
