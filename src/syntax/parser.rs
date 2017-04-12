@@ -191,10 +191,14 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
             Some(Token::Funct(.., name)) => {
                 match self.peek_tok() {
                     // Compound term
-                    Some(&Token::ParenOpen(..)) => {
-                        let arity = self.read_args()?;
+                    Some(&Token::ParenOpen(line, col)) => {
+                        self.next_tok();
+                        let arity = self.read_args(false)?;
                         self.buf.push(Symbol::Funct(arity, name));
-                        Ok(0)
+                        match self.next_tok() {
+                            Some(Token::ParenClose(..)) => Ok(0),
+                            _ => Err(SyntaxError::unbalanced(line, col, '(')),
+                        }
                     }
 
                     // Definitly an atom
@@ -264,12 +268,30 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                 self.read(1200)?;
                 match self.next_tok() {
                     Some(Token::ParenClose(..)) => Ok(0),
-                    _ => Err(SyntaxError::unbalanced(line, col, ')')),
+                    _ => Err(SyntaxError::unbalanced(line, col, '(')),
                 }
             }
 
-            // TODO: Lists and braces.
-            Some(Token::BracketOpen(line, col)) => Err(SyntaxError::todo(line, col)),
+            Some(Token::BracketOpen(line, col)) => {
+                let len = self.read_args(true)?;
+                match self.next_tok() {
+                    Some(Token::BracketClose(..)) => {
+                        self.buf.push(Symbol::List(true, len));
+                        Ok(0)
+                    }
+                    Some(Token::Bar(..)) => {
+                        self.read_primary(1200)?;
+                        self.buf.push(Symbol::List(false, len + 1));
+                        match self.next_tok() {
+                            Some(Token::BracketClose(..)) => Ok(0),
+                            _ => Err(SyntaxError::unbalanced(line, col, '[')),
+                        }
+                    }
+                    _ => Err(SyntaxError::unbalanced(line, col, '[')),
+                }
+            }
+
+            // TODO: Braces.
             Some(Token::BraceOpen(line, col)) => Err(SyntaxError::todo(line, col)),
 
             // Syntax errors.
@@ -287,34 +309,21 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
     /// Because the precedence of the comma operator is 1000, the precedence of
     /// arguments must be less than 1000 to avoid conflicting. This can be
     /// ensured by wrapping arguments in parens.
-    ///
-    /// TODO: support lists
-    fn read_args(&mut self) -> Result<u32> {
-        let front = self.next_tok();
-        match front {
-            Some(Token::ParenOpen(..)) => (),
-            None => {
-                let line = self.lexer.line();
-                let col = self.lexer.col();
-                return Err(SyntaxError::unexpected(line, col, "eof"));
-            }
-            _ => panic!("must not call read_args in this context"),
-        }
-
+    fn read_args(&mut self, is_list: bool) -> Result<u32> {
         let mut arity = 1;
         loop {
             self.read(999)?;
-            match self.next_tok() {
-                Some(Token::ParenClose(..)) => return Ok(arity),
-                Some(Token::Comma(..)) => arity += 1,
-
-                Some(tok) => return Err(SyntaxError::priority_clash(tok.line(), tok.col())),
-                None => {
-                    let line = self.lexer.line();
-                    let col = self.lexer.col();
-                    return Err(SyntaxError::unexpected(line, col, "eof"));
-                }
+            let line = self.lexer.line();
+            let col = self.lexer.col();
+            match self.peek_tok() {
+                Some(&Token::Comma(..)) => arity += 1,
+                Some(&Token::ParenClose(..)) if !is_list => return Ok(arity),
+                Some(&Token::BraceClose(..)) if is_list => return Ok(arity),
+                Some(&Token::Bar(..)) if is_list => return Ok(arity),
+                Some(ref tok) => return Err(SyntaxError::priority_clash(tok.line(), tok.col())),
+                None => return Err(SyntaxError::unexpected(line, col, "eof")),
             }
+            self.next_tok();
         }
     }
 

@@ -30,6 +30,7 @@ pub enum Symbol<'ns> {
     Var(usize),
     Int(i64),
     Float(f64),
+    List(bool, u32),
 }
 
 /// A tree of `Symbol`s.
@@ -55,20 +56,6 @@ impl<'ns> Structure<'ns> {
     pub fn arity(&self) -> usize {
         self.functor().arity()
     }
-
-    /// Panics if the structure is invalid.
-    ///
-    /// Useful for debugging the parser.
-    pub fn validate(&self) {
-        let mut n: i32 = 1;
-        for sym in self.as_slice() {
-            n -= 1;
-            n += sym.arity() as i32;
-        }
-        if n != 0 {
-            panic!("invalid structure");
-        }
-    }
 }
 
 impl<'ns> Deref for Structure<'ns> {
@@ -85,10 +72,13 @@ impl<'ns> Symbol<'ns> {
     /// Gets the arity of the symbol.
     ///
     /// Function symbols can have any arity.
+    /// Lists are binary.
     /// Everything else is 0-ary.
     pub fn arity(&self) -> usize {
         match *self {
             Symbol::Funct(n, _) => n as usize,
+            Symbol::List(true, 0) => 0,
+            Symbol::List(..) => 2,
             _ => 0,
         }
     }

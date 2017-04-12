@@ -46,6 +46,8 @@ mod test {
 
     #[test]
     fn parse_file() {
+        // TODO: Fails to parse correctly because op table is not initialized.
+        // TODO: Come up with a better way to initialize the Context w/ operators.
         let ctx = Context::new();
         for r in ctx.parse_file("./src/syntax/test/parse_test.pl") {
             ()
