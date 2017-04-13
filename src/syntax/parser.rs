@@ -433,6 +433,7 @@ mod test {
             List(false, 2),
             Funct(2, ns.name("member")),
         ];
+
         let second = &[
             Var(0),
             Var(1),

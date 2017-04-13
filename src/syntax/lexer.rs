@@ -502,80 +502,88 @@ mod test {
     use super::*;
 
     #[test]
-    #[cfg_attr(rustfmt, rustfmt_skip)]
     fn basic() {
+        let ns = NameSpace::new();
         let pl = "_abcd ABCD foobar 'hello world' +++\n\
                   % this is a comment\n\
                   123 456.789 8.765e43 1e-1\n\
                   0xDEADBEEF 0o644 0b11001100 0987654321 0.123\n\
                   -> -0xff -1.23 (-)\n\
                   \t\t   \t\n";
-        let ns = NameSpace::new();
-        let mut toks = Lexer::new(pl.as_bytes(), &ns);
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 1, ns.name("_abcd")));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 7, ns.name("ABCD")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 12, ns.name("foobar")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 19, ns.name("hello world")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 33, ns.name("+++")));
-        assert_eq!(toks.next().unwrap(), Token::Int(3, 1, 123));
-        assert_eq!(toks.next().unwrap(), Token::Float(3, 5, 456.789));
-        assert_eq!(toks.next().unwrap(), Token::Float(3, 13, 8.765e43));
-        assert_eq!(toks.next().unwrap(), Token::Float(3, 22, 1e-1));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 1, 0xDEADBEEF));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 12, 0o644));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 18, 0b11001100));
-        assert_eq!(toks.next().unwrap(), Token::Int(4, 29, 0987654321));
-        assert_eq!(toks.next().unwrap(), Token::Float(4, 40, 0.123));
-        assert_eq!(toks.next().unwrap(), Token::Funct(5, 1, ns.name("->")));
-        assert_eq!(toks.next().unwrap(), Token::Int(5, 4, -0xff));
-        assert_eq!(toks.next().unwrap(), Token::Float(5, 10, -1.23));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(5, 16));
-        assert_eq!(toks.next().unwrap(), Token::Funct(5, 17, ns.name("-")));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(5, 18));
-        assert!(toks.next().is_none());
+        let toks = vec![
+            Token::Var(1, 1, ns.name("_abcd")),
+            Token::Var(1, 7, ns.name("ABCD")),
+            Token::Funct(1, 12, ns.name("foobar")),
+            Token::Funct(1, 19, ns.name("hello world")),
+            Token::Funct(1, 33, ns.name("+++")),
+            Token::Int(3, 1, 123),
+            Token::Float(3, 5, 456.789),
+            Token::Float(3, 13, 8.765e43),
+            Token::Float(3, 22, 1e-1),
+            Token::Int(4, 1, 0xDEADBEEF),
+            Token::Int(4, 12, 0o644),
+            Token::Int(4, 18, 0b11001100),
+            Token::Int(4, 29, 0987654321),
+            Token::Float(4, 40, 0.123),
+            Token::Funct(5, 1, ns.name("->")),
+            Token::Int(5, 4, -0xff),
+            Token::Float(5, 10, -1.23),
+            Token::ParenOpen(5, 16),
+            Token::Funct(5, 17, ns.name("-")),
+            Token::ParenClose(5, 18),
+        ];
+
+        let mut lexer = Lexer::new(pl.as_bytes(), &ns);
+        for tok in toks.iter() {
+            assert_eq!(lexer.next().unwrap(), *tok);
+        }
+        assert!(lexer.next().is_none());
     }
 
     #[test]
-    #[cfg_attr(rustfmt, rustfmt_skip)]
     fn realistic() {
+        let ns = NameSpace::new();
         let pl = "member(H, [H|T]).\n\
                   member(X, [_|T]) :- member(X, T).\n";
-        let ns = NameSpace::new();
-        let mut toks = Lexer::new(pl.as_bytes(), &ns);
+        let toks = vec![
+            // member(H, [H|T]).
+            Token::Funct(1, 1, ns.name("member")),
+            Token::ParenOpen(1, 7),
+            Token::Var(1, 8, ns.name("H")),
+            Token::Comma(1, 9, ns.name(",")),
+            Token::BracketOpen(1, 11),
+            Token::Var(1, 12, ns.name("H")),
+            Token::Bar(1, 13, ns.name("|")),
+            Token::Var(1, 14, ns.name("T")),
+            Token::BracketClose(1, 15),
+            Token::ParenClose(1, 16),
+            Token::Dot(1, 17),
 
-        // member(H, [H|T]).
-        assert_eq!(toks.next().unwrap(), Token::Funct(1, 1, ns.name("member")));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(1, 7));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 8, ns.name("H")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(1, 9, ns.name(",")));
-        assert_eq!(toks.next().unwrap(), Token::BracketOpen(1, 11));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 12, ns.name("H")));
-        assert_eq!(toks.next().unwrap(), Token::Bar(1, 13, ns.name("|")));
-        assert_eq!(toks.next().unwrap(), Token::Var(1, 14, ns.name("T")));
-        assert_eq!(toks.next().unwrap(), Token::BracketClose(1, 15));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(1, 16));
-        assert_eq!(toks.next().unwrap(), Token::Dot(1, 17));
+            // member(X, [_|T]) :- member(X, T).
+            Token::Funct(2, 1, ns.name("member")),
+            Token::ParenOpen(2, 7),
+            Token::Var(2, 8, ns.name("X")),
+            Token::Comma(2, 9, ns.name(",")),
+            Token::BracketOpen(2, 11),
+            Token::Var(2, 12, ns.name("_")),
+            Token::Bar(2, 13, ns.name("|")),
+            Token::Var(2, 14, ns.name("T")),
+            Token::BracketClose(2, 15),
+            Token::ParenClose(2, 16),
+            Token::Funct(2, 18, ns.name(":-")),
+            Token::Funct(2, 21, ns.name("member")),
+            Token::ParenOpen(2, 27),
+            Token::Var(2, 28, ns.name("X")),
+            Token::Comma(2, 29, ns.name(",")),
+            Token::Var(2, 31, ns.name("T")),
+            Token::ParenClose(2, 32),
+            Token::Dot(2, 33),
+        ];
 
-        // member(X, [_|T]) :- member(X, T).
-        assert_eq!(toks.next().unwrap(), Token::Funct(2, 1, ns.name("member")));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(2, 7));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 8, ns.name("X")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(2, 9, ns.name(",")));
-        assert_eq!(toks.next().unwrap(), Token::BracketOpen(2, 11));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 12, ns.name("_")));
-        assert_eq!(toks.next().unwrap(), Token::Bar(2, 13, ns.name("|")));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 14, ns.name("T")));
-        assert_eq!(toks.next().unwrap(), Token::BracketClose(2, 15));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(2, 16));
-        assert_eq!(toks.next().unwrap(), Token::Funct(2, 18, ns.name(":-")));
-        assert_eq!(toks.next().unwrap(), Token::Funct(2, 21, ns.name("member")));
-        assert_eq!(toks.next().unwrap(), Token::ParenOpen(2, 27));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 28, ns.name("X")));
-        assert_eq!(toks.next().unwrap(), Token::Comma(2, 29, ns.name(",")));
-        assert_eq!(toks.next().unwrap(), Token::Var(2, 31, ns.name("T")));
-        assert_eq!(toks.next().unwrap(), Token::ParenClose(2, 32));
-        assert_eq!(toks.next().unwrap(), Token::Dot(2, 33));
-
-        assert!(toks.next().is_none());
+        let mut lexer = Lexer::new(pl.as_bytes(), &ns);
+        for tok in toks.iter() {
+            assert_eq!(lexer.next().unwrap(), *tok);
+        }
+        assert!(lexer.next().is_none());
     }
 }
