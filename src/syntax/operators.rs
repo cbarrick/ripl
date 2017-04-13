@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::ops::Deref;
 
-use syntax::namespace::{NameSpace, Name};
+use syntax::namespace::{Name, NameSpace};
 
 /// An entry in the `OpTable`.
 ///
@@ -121,7 +121,7 @@ impl<'ns> OpTable<'ns> {
         self.get(name)
             .iter()
             .cloned()
-            .find(|op| op.op_type() == OpType::Postfix && op.prec() <= max_prec)
+            .find(|op| op.op_type() == OpType::Postfix && op.prec() <= max_prec,)
     }
 
     /// Get the first operator of the given `name` which has precedence less

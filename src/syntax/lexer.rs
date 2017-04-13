@@ -15,7 +15,7 @@ use std::io::BufRead;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
-use syntax::namespace::{NameSpace, Name};
+use syntax::namespace::{Name, NameSpace};
 use syntax::error::SyntaxError;
 
 /// A lexer for logic programs.
@@ -260,7 +260,10 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
         }
 
         let m = RE.find(line).unwrap();
-        let s = m.as_str().split(|ch| ch == ',' || ch == '.' || ch == '|').nth(0).unwrap();
+        let s = m.as_str()
+            .split(|ch| ch == ',' || ch == '.' || ch == '|')
+            .nth(0)
+            .unwrap();
         let tok = Token::Funct(self.line(), self.col(), self.ns.name(s));
         (tok, s.len())
     }
@@ -301,7 +304,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                     Token::Float(_, _, val) => Token::Float(self.line(), self.col(), -val),
                     _ => unreachable!("lex_zero must return a numeric token"),
                 }
-            }
+            },
             Some(ch) if ch.is_digit(10) => {
                 let (subtok, sublen) = self.lex_decimal(&line[1..]);
                 len += 1 + sublen;
@@ -310,7 +313,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                     Token::Float(_, _, val) => Token::Float(self.line(), self.col(), -val),
                     _ => unreachable!("lex_zero must return a numeric token"),
                 }
-            }
+            },
             _ => return self.lex_functor(line),
         };
         (tok, len)
@@ -349,7 +352,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                 ch if ch.is_digit(radix) => {
                     len += ch.len_utf8();
                     buf.push(ch);
-                }
+                },
                 _ => break,
             }
         }
@@ -415,7 +418,7 @@ impl<'ns, B: BufRead> Lexer<'ns, B> {
                     ch if ch == quote => {
                         ok = true;
                         break;
-                    }
+                    },
                     ch => buf.push(ch),
                 }
             }

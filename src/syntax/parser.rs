@@ -26,10 +26,10 @@ use std::io::BufRead;
 use std::mem;
 use std::vec::Drain;
 
-use syntax::error::{SyntaxError, Result};
+use syntax::error::{Result, SyntaxError};
 use syntax::lexer::{Lexer, Token};
-use syntax::namespace::{NameSpace, Name};
-use syntax::operators::{OpTable, Op};
+use syntax::namespace::{Name, NameSpace};
+use syntax::operators::{Op, OpTable};
 use syntax::repr::{Structure, Symbol};
 
 /// An iterator over [`Structure`]s in UTF-8 text.
@@ -46,7 +46,8 @@ use syntax::repr::{Structure, Symbol};
 /// [`NameSpace`]: ../namespace/struct.NameSpace.html
 /// [`OpTable`]: ../operators/struct.OpTable.html
 ///
-/// [1]: https://en.wikipedia.org/wiki/Operator-precedence_parser#Precedence_climbing_method
+/// [1]: https://en.wikipedia.
+/// org/wiki/Operator-precedence_parser#Precedence_climbing_method
 pub struct Parser<'ctx, B: BufRead> {
     ops: &'ctx OpTable<'ctx>,
     lexer: Lexer<'ctx, B>,
@@ -60,7 +61,8 @@ pub struct Parser<'ctx, B: BufRead> {
 // --------------------------------------------------
 
 impl<'ctx, B: BufRead> Parser<'ctx, B> {
-    /// Constructs a new `Parser` from the given reader, namespace, and operator table.
+    /// Constructs a new `Parser` from the given reader, namespace, and
+    /// operator table.
     pub fn new(reader: B, ns: &'ctx NameSpace, ops: &'ctx OpTable<'ctx>) -> Parser<'ctx, B> {
         Parser {
             ops: ops,
@@ -99,11 +101,11 @@ impl<'ctx, B: BufRead> Iterator for Parser<'ctx, B> {
                     self.errs.push(SyntaxError::priority_clash(line, col));
                     self.next()
                 }
-            }
+            },
             Err(err) => {
                 self.errs.push(err);
                 return self.next();
-            }
+            },
         }
     }
 }
@@ -129,7 +131,8 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
     ///
     /// The algorithm implemented here is [Precedence climbing][1].
     ///
-    /// [1]: https://en.wikipedia.org/wiki/Operator-precedence_parser#Precedence_climbing_method
+    /// [1]: https://en.wikipedia.
+    /// org/wiki/Operator-precedence_parser#Precedence_climbing_method
     fn read(&mut self, max_prec: u32) -> Result<u32> {
         // Check that we're not at EOF.
         if self.peek_tok().is_none() {
@@ -153,18 +156,18 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                                 Op::XFY(..) => {
                                     prec = self.read(op.prec())?;
                                     self.buf.push(Symbol::Funct(2, name));
-                                }
+                                },
                                 Op::YFX(..) | Op::XFX(..) => {
                                     prec = self.read(op.prec() - 1)?;
                                     self.buf.push(Symbol::Funct(2, name));
-                                }
+                                },
                                 _ => {
                                     self.buf.push(Symbol::Funct(1, name));
-                                }
+                                },
                             }
-                        }
+                        },
                     }
-                }
+                },
                 _ => break,
             }
         }
@@ -183,7 +186,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
             Some(Token::Space(..)) |
             Some(Token::Comment(..)) => {
                 return self.read_primary(max_prec);
-            }
+            },
 
             // Atoms, compounds, and prefix operators.
             Some(Token::Bar(.., name)) |
@@ -199,7 +202,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                             Some(Token::ParenClose(..)) => Ok(0),
                             _ => Err(SyntaxError::unbalanced(line, col, '(')),
                         }
-                    }
+                    },
 
                     // Definitly an atom
                     Some(&Token::ParenClose(..)) |
@@ -207,7 +210,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                     Some(&Token::BraceClose(..)) => {
                         self.buf.push(Symbol::Funct(0, name));
                         Ok(0)
-                    }
+                    },
 
                     // Possibly prefix operator
                     _ => {
@@ -216,26 +219,26 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                                 self.read(p - 1)?;
                                 self.buf.push(Symbol::Funct(1, name));
                                 Ok(p)
-                            }
+                            },
                             Some(Op::FY(p, _)) => {
                                 self.read(p)?;
                                 self.buf.push(Symbol::Funct(1, name));
                                 Ok(p)
-                            }
+                            },
                             _ => {
                                 self.buf.push(Symbol::Funct(0, name));
                                 Ok(0)
-                            }
+                            },
                         }
-                    }
+                    },
                 }
-            }
+            },
 
             // Strings.
             Some(Token::Str(.., val)) => {
                 self.buf.push(Symbol::Str(val.as_str()));
                 Ok(0)
-            }
+            },
 
             // Variables.
             Some(Token::Var(.., val)) => {
@@ -243,25 +246,25 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                     Some(n) => {
                         self.buf.push(Symbol::Var(n));
                         Ok(0)
-                    }
+                    },
                     None => {
                         let n = self.vars.len();
                         self.vars.push(val);
                         self.buf.push(Symbol::Var(n));
                         Ok(0)
-                    }
+                    },
                 }
-            }
+            },
 
             // Numbers.
             Some(Token::Int(.., val)) => {
                 self.buf.push(Symbol::Int(val));
                 Ok(0)
-            }
+            },
             Some(Token::Float(.., val)) => {
                 self.buf.push(Symbol::Float(val));
                 Ok(0)
-            }
+            },
 
             // Parens.
             Some(Token::ParenOpen(line, col)) => {
@@ -270,7 +273,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                     Some(Token::ParenClose(..)) => Ok(0),
                     _ => Err(SyntaxError::unbalanced(line, col, '(')),
                 }
-            }
+            },
 
             Some(Token::BracketOpen(line, col)) => {
                 let len = self.read_args(true)?;
@@ -278,7 +281,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                     Some(Token::BracketClose(..)) => {
                         self.buf.push(Symbol::List(true, len));
                         Ok(0)
-                    }
+                    },
                     Some(Token::Bar(..)) => {
                         self.read_primary(1200)?;
                         self.buf.push(Symbol::List(false, len + 1));
@@ -286,10 +289,10 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                             Some(Token::BracketClose(..)) => Ok(0),
                             _ => Err(SyntaxError::unbalanced(line, col, '[')),
                         }
-                    }
+                    },
                     _ => Err(SyntaxError::unbalanced(line, col, '[')),
                 }
-            }
+            },
 
             // TODO: Braces.
             Some(Token::BraceOpen(line, col)) => Err(SyntaxError::todo(line, col)),
@@ -300,7 +303,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
             Some(Token::BraceClose(line, col)) => Err(SyntaxError::unbalanced(line, col, '}')),
             Some(Token::Dot(line, col)) => Err(SyntaxError::unexpected(line, col, "period")),
             Some(Token::Err(e)) => Err(e),
-            None => Err(SyntaxError::unexpected(self.lexer.line(), self.lexer.col(), "eof")),
+            None => Err(SyntaxError::unexpected(self.lexer.line(), self.lexer.col(), "eof"),),
         }
     }
 
@@ -340,7 +343,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                     Some(ref tok) => Some(tok),
                     None => None,
                 }
-            }
+            },
         }
     }
 
@@ -356,7 +359,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                     None => None,
                     Some(tok) => Some(tok),
                 }
-            }
+            },
         }
     }
 }
@@ -375,14 +378,16 @@ mod test {
         let ops = OpTable::default(&ns);
 
         let pl = "-foo(bar, baz(123, 456.789), \"hello world\", X).\n";
-        let st = vec![Funct(0, ns.name("bar")),
-                      Int(123),
-                      Float(456.789),
-                      Funct(2, ns.name("baz")),
-                      Str("hello world"),
-                      Var(0),
-                      Funct(4, ns.name("foo")),
-                      Funct(1, ns.name("-"))];
+        let st = vec![
+            Funct(0, ns.name("bar")),
+            Int(123),
+            Float(456.789),
+            Funct(2, ns.name("baz")),
+            Str("hello world"),
+            Var(0),
+            Funct(4, ns.name("foo")),
+            Funct(1, ns.name("-")),
+        ];
         let st = unsafe { struct_from_vec(st) };
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
@@ -396,13 +401,15 @@ mod test {
         let ops = OpTable::default(&ns);
 
         let pl = "a * b + c * d.\n";
-        let st = vec![Funct(0, ns.name("a")),
-                      Funct(0, ns.name("b")),
-                      Funct(2, ns.name("*")),
-                      Funct(0, ns.name("c")),
-                      Funct(0, ns.name("d")),
-                      Funct(2, ns.name("*")),
-                      Funct(2, ns.name("+"))];
+        let st = vec![
+            Funct(0, ns.name("a")),
+            Funct(0, ns.name("b")),
+            Funct(2, ns.name("*")),
+            Funct(0, ns.name("c")),
+            Funct(0, ns.name("d")),
+            Funct(2, ns.name("*")),
+            Funct(2, ns.name("+")),
+        ];
         let st = unsafe { struct_from_vec(st) };
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
@@ -419,18 +426,24 @@ mod test {
         let pl = "member(H, [H|T]).\n\
                   member(X, [_|T]) :- member(X, T).\n";
 
-        {
-            let first = &[Var(0), Var(0), Var(1), List(false, 2), Funct(2, ns.name("member"))];
-            let second = &[Var(0),
-                           Var(1),
-                           Var(2),
-                           List(false, 2),
-                           Funct(2, ns.name("member")),
-                           Var(0),
-                           Var(2),
-                           Funct(2, ns.name("member")),
-                           Funct(2, ns.name(":-"))];
-        }
+        let first = &[
+            Var(0),
+            Var(0),
+            Var(1),
+            List(false, 2),
+            Funct(2, ns.name("member")),
+        ];
+        let second = &[
+            Var(0),
+            Var(1),
+            Var(2),
+            List(false, 2),
+            Funct(2, ns.name("member")),
+            Var(0),
+            Var(2),
+            Funct(2, ns.name("member")),
+            Funct(2, ns.name(":-")),
+        ];
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
 

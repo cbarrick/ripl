@@ -33,7 +33,8 @@ impl SyntaxError {
     }
 
     pub fn wrap<E>(line: usize, col: usize, err: E) -> SyntaxError
-        where E: Into<Box<Error + Send + Sync>>
+    where
+        E: Into<Box<Error + Send + Sync>>,
     {
         SyntaxError::new(line, col, Kind::Wrapper(err.into()))
     }

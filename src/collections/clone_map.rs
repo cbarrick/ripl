@@ -11,9 +11,10 @@ use rand;
 /// An optionally persistent map implemented as a Hash Array Mapped Trie.
 #[derive(Clone)]
 pub struct CloneMap<K, V, S = RandomState>
-    where K: Hash + Eq + Clone,
-          V: Clone,
-          S: BuildHasher
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+    S: BuildHasher,
 {
     branch_power: u32,
     seed: u32,
@@ -24,8 +25,9 @@ pub struct CloneMap<K, V, S = RandomState>
 
 #[derive(Clone)]
 enum Branch<K, V>
-    where K: Hash + Eq + Clone,
-          V: Clone
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
 {
     C(CNode<K, V>),
     M(CloneMap<K, V>),
@@ -35,8 +37,9 @@ enum Branch<K, V>
 
 #[derive(Clone)]
 struct CNode<K, V>
-    where K: Hash + Eq + Clone,
-          V: Clone
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
 {
     bitmap: u64,
     branches: Vec<Arc<Branch<K, V>>>,
@@ -45,8 +48,9 @@ struct CNode<K, V>
 
 #[derive(Clone)]
 struct Store<K, V>
-    where K: Hash + Eq + Clone,
-          V: Clone
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
 {
     hash: u64,
     key: K,
@@ -58,8 +62,9 @@ struct Store<K, V>
 // --------------------------------------------------
 
 impl<K, V> CloneMap<K, V, RandomState>
-    where K: Hash + Eq + Clone,
-          V: Clone
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
 {
     /// Creates an empty `CloneMap` with a default branching factor.
     ///
@@ -101,12 +106,14 @@ impl<K, V> CloneMap<K, V, RandomState>
 
 
 impl<K, V, S> CloneMap<K, V, S>
-    where K: Hash + Eq + Clone,
-          V: Clone,
-          S: BuildHasher
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+    S: BuildHasher,
 {
     fn hash<Q: ?Sized>(&self, q: &Q) -> u64
-        where Q: Hash + Eq
+    where
+        Q: Hash + Eq,
     {
         let mut hasher = self.hash_builder.build_hasher();
         hasher.write_u32(self.seed);
@@ -172,8 +179,9 @@ impl<K, V, S> CloneMap<K, V, S>
     /// assert_eq!(map.get(&2), None);
     /// ```
     pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&V>
-        where K: Borrow<Q>,
-              Q: Hash + Eq
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
     {
         let hash = self.hash(key);
         self.root.get(hash, key, 0, self.branch_power)
@@ -201,8 +209,9 @@ impl<K, V, S> CloneMap<K, V, S>
     /// assert_eq!(map.remove(&1), None);
     /// ```
     pub fn remove<Q: ?Sized>(&mut self, key: &Q) -> Option<V>
-        where K: Borrow<Q>,
-              Q: Hash + Eq
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
     {
         let hash = self.hash(key);
         let mut root = Arc::make_mut(&mut self.root);
@@ -239,10 +248,11 @@ impl<K, V, S> CloneMap<K, V, S>
 
 
 impl<'a, K, Q, V, S> Index<&'a Q> for CloneMap<K, V, S>
-    where K: Hash + Eq + Clone + Borrow<Q>,
-          Q: Hash + Eq,
-          V: Clone,
-          S: BuildHasher
+where
+    K: Hash + Eq + Clone + Borrow<Q>,
+    Q: Hash + Eq,
+    V: Clone,
+    S: BuildHasher,
 {
     type Output = V;
     fn index(&self, index: &Q) -> &V {
@@ -254,8 +264,9 @@ impl<'a, K, Q, V, S> Index<&'a Q> for CloneMap<K, V, S>
 // --------------------------------------------------
 
 impl<K, V> CNode<K, V>
-    where K: Hash + Eq + Clone,
-          V: Clone
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
 {
     /// Constructs an empty `CNode`.
     fn new() -> CNode<K, V> {
@@ -293,8 +304,9 @@ impl<K, V> CNode<K, V>
     /// increases by `w` with each recursion. `w` is the branching power of the
     /// tree (the log of the branching factor).
     fn get<Q: ?Sized>(&self, hash: u64, key: &Q, level: u32, w: u32) -> Option<&V>
-        where K: Borrow<Q>,
-              Q: Hash + Eq
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
     {
         let (flag, pos) = self.flagpos(hash, level, w);
 
@@ -319,7 +331,7 @@ impl<K, V> CNode<K, V>
                 } else {
                     None
                 }
-            }
+            },
         }
     }
 
@@ -333,8 +345,9 @@ impl<K, V> CNode<K, V>
     /// increases by `w` with each recursion. `w` is the branching power of the
     /// tree (the log of the branching factor).
     fn remove<Q: ?Sized>(&mut self, hash: u64, key: &Q, level: u32, w: u32) -> Option<V>
-        where K: Borrow<Q>,
-              Q: Hash + Eq
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
     {
         let (flag, pos) = self.flagpos(hash, level, w);
 
@@ -362,7 +375,7 @@ impl<K, V> CNode<K, V>
                     if s.key.borrow() != key {
                         return None;
                     }
-                }
+                },
             }
         }
 
@@ -374,7 +387,7 @@ impl<K, V> CNode<K, V>
             Ok(Branch::S(s)) => {
                 self.bitmap ^= flag;
                 return Some(s.val);
-            }
+            },
 
             // UNREACHABLE: The call to `Arc::make_mut` ensures we are the
             // exclusive owner of the branch at `pos`. Thus the call to
@@ -401,7 +414,8 @@ impl<K, V> CNode<K, V>
 
         // Simple case: insert if we have a vacancy.
         if self.bitmap & flag == 0 {
-            self.branches.insert(pos, Arc::new(Branch::S(Store::new(hash, key, val))));
+            self.branches
+                .insert(pos, Arc::new(Branch::S(Store::new(hash, key, val))));
             self.bitmap |= flag;
             return None;
         }
@@ -448,7 +462,7 @@ impl<K, V> CNode<K, V>
                 // SAFTEY: ensure that the branch is replaced.
                 unsafe { ptr::replace(branch_ptr, new_branch) };
                 None
-            }
+            },
         }
     }
 }
@@ -458,8 +472,9 @@ impl<K, V> CNode<K, V>
 // --------------------------------------------------
 
 impl<K, V> Store<K, V>
-    where K: Hash + Eq + Clone,
-          V: Clone
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
 {
     fn new(hash: u64, key: K, val: V) -> Store<K, V> {
         Store {

@@ -18,7 +18,7 @@
 //! [`Name`]: ./struct.Name.html
 
 use std::cell::RefCell;
-use std::cmp::{PartialOrd, Ordering};
+use std::cmp::{Ordering, PartialOrd};
 use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
@@ -59,7 +59,8 @@ impl NameSpace {
 
     /// Returns a `Name` for the token.
     pub fn name<'ns, S>(&'ns self, tok: S) -> Name<'ns>
-        where S: Into<String> + AsRef<str>
+    where
+        S: Into<String> + AsRef<str>,
     {
         // If the token is already in the set,
         // fetch the old key and convert it into a Name
