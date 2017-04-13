@@ -7,11 +7,6 @@
 //! are treated with a single lifetime, `'ctx`, because they are assumed to be
 //! owned by roughly the same calling context.
 //!
-//! Errors at both the I/O and syntax levels are saved into a buffer and may be
-//! accessed through the [`errs`] method. If there are any errors, then the
-//! structures emitted by the parser cannot be assumed to accurately represent
-//! the (possibly invalid) source program.
-//!
 //! For more information on the syntax of logic programs, see the Wikipedia
 //! article on the [syntax and semantics of Prolog][1].
 //!
@@ -24,7 +19,6 @@
 
 use std::io::BufRead;
 use std::mem;
-use std::vec::Drain;
 
 use syntax::error::{Result, SyntaxError};
 use syntax::lexer::{Lexer, Token};
@@ -52,7 +46,6 @@ pub struct Parser<'ctx, B: BufRead> {
     ops: &'ctx OpTable<'ctx>,
     lexer: Lexer<'ctx, B>,
     peeked: Option<Token<'ctx>>,
-    errs: Vec<SyntaxError>,
     vars: Vec<Name<'ctx>>,
     buf: Vec<Symbol<'ctx>>,
 }
@@ -68,25 +61,20 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
             ops: ops,
             lexer: Lexer::new(reader, ns),
             peeked: None,
-            errs: Vec::new(),
             vars: Vec::with_capacity(32),
             buf: Vec::with_capacity(256),
         }
     }
-
-    /// Returns a draining iterator over the set of errors.
-    pub fn errs(&mut self) -> Drain<SyntaxError> {
-        self.errs.drain(0..)
-    }
 }
 
 impl<'ctx, B: BufRead> Iterator for Parser<'ctx, B> {
-    type Item = Box<Structure<'ctx>>;
+    type Item = Result<Box<Structure<'ctx>>>;
 
-    fn next(&mut self) -> Option<Box<Structure<'ctx>>> {
+    fn next(&mut self) -> Option<Result<Box<Structure<'ctx>>>> {
         self.vars.clear();
         self.buf.clear();
         match self.read(1200) {
+            Err(e) => Some(Err(e)),
             Ok(_) => {
                 if self.buf.len() == 0 {
                     // `read` produced no results.
@@ -94,17 +82,12 @@ impl<'ctx, B: BufRead> Iterator for Parser<'ctx, B> {
                     None
                 } else if let Some(Token::Dot(..)) = self.next_tok() {
                     let structure = unsafe { struct_from_vec(self.buf.clone()) };
-                    Some(structure)
+                    Some(Ok(structure))
                 } else {
                     let line = self.lexer.line();
                     let col = self.lexer.col();
-                    self.errs.push(SyntaxError::priority_clash(line, col));
-                    self.next()
+                    Some(Err(SyntaxError::priority_clash(line, col)))
                 }
-            },
-            Err(err) => {
-                self.errs.push(err);
-                return self.next();
             },
         }
     }
@@ -378,7 +361,7 @@ mod test {
         let ops = OpTable::default(&ns);
 
         let pl = "-foo(bar, baz(123, 456.789), \"hello world\", X).\n";
-        let st = vec![
+        let st = &[
             Funct(0, ns.name("bar")),
             Int(123),
             Float(456.789),
@@ -388,11 +371,9 @@ mod test {
             Funct(4, ns.name("foo")),
             Funct(1, ns.name("-")),
         ];
-        let st = unsafe { struct_from_vec(st) };
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
-        assert_eq!(parser.errs().count(), 0);
-        assert_eq!(parser.next(), Some(st));
+        assert_eq!(parser.next().unwrap().unwrap().as_slice(), st);
     }
 
     #[test]
@@ -401,7 +382,7 @@ mod test {
         let ops = OpTable::default(&ns);
 
         let pl = "a * b + c * d.\n";
-        let st = vec![
+        let st = &[
             Funct(0, ns.name("a")),
             Funct(0, ns.name("b")),
             Funct(2, ns.name("*")),
@@ -410,11 +391,10 @@ mod test {
             Funct(2, ns.name("*")),
             Funct(2, ns.name("+")),
         ];
-        let st = unsafe { struct_from_vec(st) };
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
-        assert_eq!(parser.next(), Some(st));
-        assert_eq!(parser.errs().count(), 0);
+        assert_eq!(parser.next().unwrap().unwrap().as_slice(), st);
+        assert_eq!(parser.next(), None);
     }
 
     #[test]
@@ -447,11 +427,8 @@ mod test {
         ];
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
-
-        assert_eq!(parser.next().unwrap().as_slice(), first);
-        assert_eq!(parser.errs().count(), 0);
-
-        assert_eq!(parser.next().unwrap().as_slice(), second);
-        assert_eq!(parser.errs().count(), 0);
+        assert_eq!(parser.next().unwrap().unwrap().as_slice(), first);
+        assert_eq!(parser.next().unwrap().unwrap().as_slice(), second);
+        assert_eq!(parser.next(), None);
     }
 }
