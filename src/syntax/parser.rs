@@ -416,20 +416,21 @@ mod test {
         let ops = OpTable::default(&ns);
 
         // TODO: update to list syntax
-        let pl = "member(H, list(H,T)).\n\
-                  member(X, list(_,T)) :- member(X, T).\n";
+        let pl = "member(H, [H|T]).\n\
+                  member(X, [_|T]) :- member(X, T).\n";
 
-        let first =
-            &[Var(0), Var(0), Var(1), Funct(2, ns.name("list")), Funct(2, ns.name("member"))];
-        let second = &[Var(0),
-                       Var(1),
-                       Var(2),
-                       Funct(2, ns.name("list")),
-                       Funct(2, ns.name("member")),
-                       Var(0),
-                       Var(2),
-                       Funct(2, ns.name("member")),
-                       Funct(2, ns.name(":-"))];
+        {
+            let first = &[Var(0), Var(0), Var(1), List(false, 2), Funct(2, ns.name("member"))];
+            let second = &[Var(0),
+                           Var(1),
+                           Var(2),
+                           List(false, 2),
+                           Funct(2, ns.name("member")),
+                           Var(0),
+                           Var(2),
+                           Funct(2, ns.name("member")),
+                           Funct(2, ns.name(":-"))];
+        }
 
         let mut parser = Parser::new(pl.as_bytes(), &ns, &ops);
 
