@@ -21,6 +21,7 @@ use std::cell::RefCell;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::HashSet;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
@@ -92,6 +93,12 @@ impl NameSpace {
 impl<'ns> Name<'ns> {
     pub fn as_str(&self) -> &'ns str {
         unsafe { mem::transmute(self.ptr) }
+    }
+}
+
+impl<'ns> Hash for Name<'ns> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write(self.as_bytes())
     }
 }
 
