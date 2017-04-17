@@ -10,4 +10,5 @@ extern crate regex;
 extern crate unicode_normalization;
 
 pub mod collections;
+pub mod db;
 pub mod syntax;
