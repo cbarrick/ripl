@@ -16,6 +16,8 @@
 
 use std::ops::Deref;
 
+use ordered_float::OrderedFloat;
+
 use syntax::namespace::Name;
 
 /// An atomic symbol of a logic program.
@@ -23,19 +25,23 @@ use syntax::namespace::Name;
 /// Symbols are guaranteed to fit within two words on 64bit architectures.
 #[derive(Debug)]
 #[derive(Clone, Copy)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
+#[derive(PartialOrd, Ord)]
+#[derive(Hash)]
 pub enum Symbol<'ns> {
     Funct(u32, Name<'ns>),
     Str(&'ns str),
     Var(usize),
     Int(i64),
-    Float(f64),
+    Float(OrderedFloat<f64>),
     List(bool, u32),
 }
 
 /// A tree of `Symbol`s.
 #[derive(Debug)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
+#[derive(PartialOrd, Ord)]
+#[derive(Hash)]
 pub struct Structure<'ns>([Symbol<'ns>]);
 
 // Structure

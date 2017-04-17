@@ -20,6 +20,8 @@
 use std::io::BufRead;
 use std::mem;
 
+use ordered_float::OrderedFloat;
+
 use syntax::error::{Result, SyntaxError};
 use syntax::lexer::{Lexer, Token};
 use syntax::namespace::{Name, NameSpace};
@@ -245,7 +247,7 @@ impl<'ctx, B: BufRead> Parser<'ctx, B> {
                 Ok(0)
             },
             Some(Token::Float(.., val)) => {
-                self.buf.push(Symbol::Float(val));
+                self.buf.push(Symbol::Float(OrderedFloat(val)));
                 Ok(0)
             },
 

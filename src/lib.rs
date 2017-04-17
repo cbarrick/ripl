@@ -4,6 +4,7 @@
 #[macro_use]
 extern crate lazy_static;
 
+extern crate ordered_float;
 extern crate rand;
 extern crate regex;
 extern crate unicode_normalization;
